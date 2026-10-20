@@ -1,0 +1,6 @@
+target/
+reports/
+tasks/
+.worktrees/
+pass.base64
+__pycache__/

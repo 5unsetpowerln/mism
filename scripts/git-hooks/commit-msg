@@ -1,0 +1,5 @@
+#!/bin/sh
+# コミットメッセージを japanese-rules.md に照らして検査する。
+set -e
+cd "$(git rev-parse --show-toplevel)"
+exec scripts/check-japanese.py --message "$1"
