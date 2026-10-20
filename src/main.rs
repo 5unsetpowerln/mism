@@ -64,7 +64,7 @@ fn run(command_line: CommandLine) -> Result<(), Error> {
 fn report(error: &Error) -> ExitCode {
     match error.interrupted_by() {
         Some(signal) => {
-            eprintln!("mmmm: interrupted by {signal}");
+            eprintln!("mism: interrupted by {signal}");
             ExitCode::from(
                 u8::try_from(signal.exit_status()).expect("130 and 143 fit in an exit status"),
             )
@@ -77,7 +77,7 @@ fn report(error: &Error) -> ExitCode {
 }
 
 fn print_error(error: &Error) {
-    eprintln!("mmmm: {error}");
+    eprintln!("mism: {error}");
     let mut source = error.source();
     while let Some(cause) = source {
         eprintln!("  caused by: {cause}");

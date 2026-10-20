@@ -190,7 +190,7 @@ fn java_major_version(java: &Path) -> Result<u32, Error> {
             java: java.to_path_buf(),
             source,
         })?;
-    // A Ctrl-C also reaches `java -version`, which shares mmmm's process group, so whatever it
+    // A Ctrl-C also reaches `java -version`, which shares mism's process group, so whatever it
     // printed is reported as the interruption.
     if let Some(signal) = interruption::received() {
         return Err(Error::Interrupted(signal));
@@ -237,7 +237,7 @@ fn start_server(java: &Path, working_directory: &Path, jar_name: &str) -> Result
         .stdin(Stdio::null())
         .stdout(io::stderr())
         .stderr(io::stderr())
-        // In its own process group, the server does not receive the terminal's Ctrl-C, so mmmm
+        // In its own process group, the server does not receive the terminal's Ctrl-C, so mism
         // decides when and how it stops.
         .process_group(0)
         .spawn()
@@ -636,7 +636,7 @@ mod tests {
         );
     }
 
-    /// 「mmmm new の手順と中断」 方法: stopping the server sends SIGTERM to its process group.
+    /// 「mism new の手順と中断」 方法: stopping the server sends SIGTERM to its process group.
     #[test]
     fn stop_server_ends_a_server_with_sigterm() {
         let java = fake_java(JAVA_25, "exec sleep 60");
@@ -653,7 +653,7 @@ mod tests {
         assert_eq!(exit_signal(&mut server), Some(SIGTERM as i32));
     }
 
-    /// 「mmmm new の手順と中断」 方法: a server still running after the grace period gets SIGKILL.
+    /// 「mism new の手順と中断」 方法: a server still running after the grace period gets SIGKILL.
     #[test]
     fn stop_server_kills_a_server_that_ignores_sigterm() {
         let java = fake_java(JAVA_25, "trap '' TERM; : > ready; exec sleep 60");

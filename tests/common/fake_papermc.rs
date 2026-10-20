@@ -26,7 +26,7 @@ impl FakePaperMc {
         FakePaperMc { runtime, server }
     }
 
-    /// The value tests pass as `MMMM_PAPERMC_URL`.
+    /// The value tests pass as `MISM_PAPERMC_URL`.
     pub fn base_url(&self) -> String {
         format!("{}/v3", self.server.uri())
     }

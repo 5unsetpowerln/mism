@@ -6,13 +6,13 @@ use sha2::{Digest, Sha256};
 
 use super::ServerDirectory;
 use super::initial_launch;
-use super::mmmm_toml::{self, MmmmToml};
+use super::mism_toml::{self, MismToml};
 use crate::atomic_fs;
 use crate::interruption::{self, Signal};
 
-const WORKING_DIRECTORY_PREFIX: &str = ".mmmm-tmp-";
+const WORKING_DIRECTORY_PREFIX: &str = ".mism-tmp-";
 const RANDOM_SOURCE: &str = "/dev/urandom";
-const MMMM_TOML_FILE_NAME: &str = "mmmm.toml";
+const MISM_TOML_FILE_NAME: &str = "mism.toml";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -70,7 +70,7 @@ pub enum Error {
     #[error(transparent)]
     InitialLaunch(#[from] initial_launch::Error),
     #[error(transparent)]
-    MmmmToml(#[from] mmmm_toml::Error),
+    MismToml(#[from] mism_toml::Error),
     #[error("interrupted by {0}")]
     Interrupted(Signal),
     #[error("{} appeared while the server directory was being prepared", path.display())]
@@ -90,7 +90,7 @@ impl Error {
     pub fn hint(&self) -> Option<String> {
         match self {
             Error::InitialLaunch(error) => error.hint(),
-            Error::MmmmToml(error) => error.hint(),
+            Error::MismToml(error) => error.hint(),
             Error::Rename(error) => error.hint(),
             Error::LeftWorkingDirectory { failure, .. } => failure.hint(),
             _ => None,
@@ -140,7 +140,7 @@ pub fn check_target_path(path: &Path) -> Result<TargetPath, Error> {
 pub fn create_server_directory(
     target: TargetPath,
     jar: &CachedJar,
-    mmmm_toml: MmmmToml,
+    mism_toml: MismToml,
     minimum_java_version: u32,
 ) -> Result<ServerDirectory, Error> {
     let working_directory = create_working_directory(&target.parent)?;
@@ -148,12 +148,12 @@ pub fn create_server_directory(
         &working_directory,
         &target.path,
         jar,
-        &mmmm_toml,
+        &mism_toml,
         minimum_java_version,
     ) {
         Ok(()) => Ok(ServerDirectory {
             path: target.path,
-            mmmm_toml,
+            mism_toml,
         }),
         Err(failure) => Err(remove_working_directory(&working_directory, failure)),
     }
@@ -224,12 +224,12 @@ fn prepare_and_rename(
     working_directory: &Path,
     target: &Path,
     jar: &CachedJar,
-    mmmm_toml: &MmmmToml,
+    mism_toml: &MismToml,
     minimum_java_version: u32,
 ) -> Result<(), Error> {
     copy_jar(working_directory, jar)?;
     initial_launch::launch(working_directory, jar.name, minimum_java_version)?;
-    write_mmmm_toml(working_directory, mmmm_toml)?;
+    write_mism_toml(working_directory, mism_toml)?;
     fail_if_interrupted()?;
     rename_to_target(working_directory, target)
 }
@@ -273,8 +273,8 @@ fn sha256_of_file(path: &Path) -> io::Result<String> {
 }
 
 /// Step 7 of 「初回起動」 (new-9).
-fn write_mmmm_toml(working_directory: &Path, mmmm_toml: &MmmmToml) -> Result<(), Error> {
-    Ok(mmmm_toml.write(&working_directory.join(MMMM_TOML_FILE_NAME))?)
+fn write_mism_toml(working_directory: &Path, mism_toml: &MismToml) -> Result<(), Error> {
+    Ok(mism_toml.write(&working_directory.join(MISM_TOML_FILE_NAME))?)
 }
 
 /// Notices a signal that arrived after the server exited, at the last moment at which nothing is
@@ -350,15 +350,15 @@ mod tests {
         path
     }
 
-    fn paper_26_3_206() -> MmmmToml {
-        MmmmToml {
+    fn paper_26_3_206() -> MismToml {
+        MismToml {
             software: "paper".to_owned(),
             minecraft_version: "26.3".to_owned(),
             software_version: 206,
         }
     }
 
-    /// 「mmmm new の手順と中断」 方法 1 (new-1): a relative path is joined to the current directory.
+    /// 「mism new の手順と中断」 方法 1 (new-1): a relative path is joined to the current directory.
     #[test]
     fn relative_path_is_joined_to_the_current_directory() {
         assert_eq!(
@@ -367,7 +367,7 @@ mod tests {
         );
     }
 
-    /// 「mmmm new の手順と中断」 方法 1: `.` components are dropped from the absolute path.
+    /// 「mism new の手順と中断」 方法 1: `.` components are dropped from the absolute path.
     #[test]
     fn dot_components_are_dropped_from_the_absolute_path() {
         assert_eq!(
@@ -376,7 +376,7 @@ mod tests {
         );
     }
 
-    /// 「mmmm new の手順と中断」 方法 1: an empty path has no absolute form.
+    /// 「mism new の手順と中断」 方法 1: an empty path has no absolute form.
     #[test]
     fn empty_path_cannot_be_made_absolute() {
         assert!(matches!(
@@ -385,7 +385,7 @@ mod tests {
         ));
     }
 
-    /// 「mmmm new の手順と中断」 方法 2 and 3 (err-2): a path below a file has a parent that is not
+    /// 「mism new の手順と中断」 方法 2 and 3 (err-2): a path below a file has a parent that is not
     /// a directory.
     #[test]
     fn path_below_a_file_has_a_parent_that_is_not_a_directory() {
@@ -398,7 +398,7 @@ mod tests {
         assert!(matches!(result, Err(Error::ParentNotDirectory { path }) if path == file));
     }
 
-    /// 「mmmm new の手順と中断」 方法 3: a symbolic link to a directory is a parent directory.
+    /// 「mism new の手順と中断」 方法 3: a symbolic link to a directory is a parent directory.
     #[test]
     fn parent_that_links_to_a_directory_is_accepted() {
         let directory = temporary_directory();
@@ -410,7 +410,7 @@ mod tests {
         assert!(result.is_ok(), "{result:?}");
     }
 
-    /// 「mmmm new の手順と中断」 方法 5: the working directory is named `.mmmm-tmp-` and 16
+    /// 「mism new の手順と中断」 方法 5: the working directory is named `.mism-tmp-` and 16
     /// lowercase hexadecimal digits.
     #[test]
     fn working_directory_is_named_with_16_hexadecimal_digits() {
@@ -419,7 +419,7 @@ mod tests {
         let working_directory = create_working_directory(parent.path()).unwrap();
 
         let name = working_directory.file_name().unwrap().to_str().unwrap();
-        let digits = name.strip_prefix(".mmmm-tmp-").unwrap_or_default();
+        let digits = name.strip_prefix(".mism-tmp-").unwrap_or_default();
         assert!(
             digits.len() == 16
                 && digits
@@ -429,7 +429,7 @@ mod tests {
         );
     }
 
-    /// 「mmmm new の手順と中断」 方法 5: the working directory is created in the parent.
+    /// 「mism new の手順と中断」 方法 5: the working directory is created in the parent.
     #[test]
     fn working_directory_is_created_in_the_parent() {
         let parent = temporary_directory();
@@ -442,7 +442,7 @@ mod tests {
         );
     }
 
-    /// 「mmmm new の手順と中断」 方法 6: the copy has the cached jar's content and the distributed
+    /// 「mism new の手順と中断」 方法 6: the copy has the cached jar's content and the distributed
     /// name.
     #[test]
     fn copied_jar_has_the_cached_content() {
@@ -467,7 +467,7 @@ mod tests {
         );
     }
 
-    /// 「mmmm new の手順と中断」 方法 6: a copy whose SHA-256 is not the published one is an error.
+    /// 「mism new の手順と中断」 方法 6: a copy whose SHA-256 is not the published one is an error.
     #[test]
     fn copied_jar_with_another_sha256_is_an_error() {
         let cache = temporary_directory();
@@ -487,12 +487,12 @@ mod tests {
         assert!(matches!(result, Err(Error::CopiedJarSha256Mismatch { .. })));
     }
 
-    /// 「mmmm new の手順と中断」 方法 8 (d-new-2): something that appeared at the path after the
+    /// 「mism new の手順と中断」 方法 8 (d-new-2): something that appeared at the path after the
     /// checks makes the rename fail.
     #[test]
     fn rename_onto_a_path_that_appeared_is_an_error() {
         let parent = temporary_directory();
-        let working_directory = parent.path().join(".mmmm-tmp-0123456789abcdef");
+        let working_directory = parent.path().join(".mism-tmp-0123456789abcdef");
         fs::create_dir(&working_directory).unwrap();
         let target = parent.path().join("survival");
         fs::create_dir(&target).unwrap();
@@ -502,7 +502,7 @@ mod tests {
         assert!(matches!(result, Err(Error::TargetAppeared { path }) if path == target));
     }
 
-    /// 「mmmm new の手順と中断」 方法 (err-8): a failure after step 5 removes the working
+    /// 「mism new の手順と中断」 方法 (err-8): a failure after step 5 removes the working
     /// directory.
     #[test]
     fn failure_after_creating_the_working_directory_removes_it() {
@@ -526,15 +526,15 @@ mod tests {
         assert_eq!(entry_names(parent.path()), Vec::<String>::new());
     }
 
-    /// 「mmmm new の手順と中断」 方法 (err-8): a working directory that cannot be removed is
-    /// reported together with the failure that made mmmm remove it.
+    /// 「mism new の手順と中断」 方法 (err-8): a working directory that cannot be removed is
+    /// reported together with the failure that made mism remove it.
     #[test]
     fn working_directory_that_cannot_be_removed_is_reported_with_the_failure() {
         let parent = temporary_directory();
         let target = parent.path().join("survival");
 
         let error = remove_working_directory(
-            &parent.path().join(".mmmm-tmp-0123456789abcdef"),
+            &parent.path().join(".mism-tmp-0123456789abcdef"),
             Error::TargetAppeared {
                 path: target.clone(),
             },

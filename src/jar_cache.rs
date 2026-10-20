@@ -103,10 +103,10 @@ fn cache_directory_from(
     home: Option<OsString>,
 ) -> Result<PathBuf, Error> {
     match xdg_cache_home.filter(|value| !value.is_empty()) {
-        Some(xdg_cache_home) => Ok(PathBuf::from(xdg_cache_home).join("mmmm")),
+        Some(xdg_cache_home) => Ok(PathBuf::from(xdg_cache_home).join("mism")),
         None => Ok(PathBuf::from(home.ok_or(Error::HomeNotSet)?)
             .join(".cache")
-            .join("mmmm")),
+            .join("mism")),
     }
 }
 
@@ -150,7 +150,7 @@ fn obtain_at(
     }
     match downloaded.link_as(jar_path) {
         Ok(()) => Ok(()),
-        // Step 6: another mmmm named its file first.
+        // Step 6: another mism named its file first.
         Err(atomic_fs::Error::AlreadyExists { .. }) => {
             verify_existing_file(jar_path, expected_sha256, url)
         }
@@ -219,7 +219,7 @@ fn download_verified(
 
 fn remove_stale_file(path: &Path) -> Result<(), Error> {
     match fs::remove_file(path) {
-        // Another mmmm may have replaced the stale file already.
+        // Another mism may have replaced the stale file already.
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         result => result.map_err(|source| Error::RemoveStale {
             path: path.to_path_buf(),
@@ -476,7 +476,7 @@ mod tests {
     fn xdg_cache_home_selects_the_cache_directory() {
         let directory = cache_directory_from(Some("/xdg".into()), Some("/home/user".into()));
 
-        assert_eq!(directory.unwrap(), Path::new("/xdg/mmmm"));
+        assert_eq!(directory.unwrap(), Path::new("/xdg/mism"));
     }
 
     /// cache-2: without XDG_CACHE_HOME the cache directory is under HOME.
@@ -484,7 +484,7 @@ mod tests {
     fn home_cache_is_used_without_xdg_cache_home() {
         let directory = cache_directory_from(None, Some("/home/user".into()));
 
-        assert_eq!(directory.unwrap(), Path::new("/home/user/.cache/mmmm"));
+        assert_eq!(directory.unwrap(), Path::new("/home/user/.cache/mism"));
     }
 
     /// cache-2: an empty XDG_CACHE_HOME counts as unset.
@@ -492,7 +492,7 @@ mod tests {
     fn empty_xdg_cache_home_counts_as_unset() {
         let directory = cache_directory_from(Some(OsString::new()), Some("/home/user".into()));
 
-        assert_eq!(directory.unwrap(), Path::new("/home/user/.cache/mmmm"));
+        assert_eq!(directory.unwrap(), Path::new("/home/user/.cache/mism"));
     }
 
     /// cache-2: with neither variable set there is no fallback.

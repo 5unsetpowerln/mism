@@ -209,7 +209,7 @@ mod tests {
         let error = select(&api, "folia", Some("1.0")).unwrap_err();
         assert_eq!(
             error.hint().unwrap(),
-            "run `mmmm versions folia` to see the distributed Minecraft versions"
+            "run `mism versions folia` to see the distributed Minecraft versions"
         );
     }
 

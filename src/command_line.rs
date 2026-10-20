@@ -77,7 +77,7 @@ impl CommandLine {
 fn parse_software(subcommand_name: &str, text: &str) -> Software {
     text.parse().unwrap_or_else(|()| {
         let mut command = RawCommandLine::command();
-        // Building propagates the binary name, so the usage reads `mmmm <subcommand> ...`.
+        // Building propagates the binary name, so the usage reads `mism <subcommand> ...`.
         command.build();
         command
             .find_subcommand_mut(subcommand_name)
@@ -92,7 +92,7 @@ fn parse_software(subcommand_name: &str, text: &str) -> Software {
 
 /// Minecraft server manager for Paper and Folia
 #[derive(Debug, Parser)]
-#[command(name = "mmmm", version)]
+#[command(name = "mism", version)]
 struct RawCommandLine {
     #[command(subcommand)]
     subcommand: RawSubcommand,

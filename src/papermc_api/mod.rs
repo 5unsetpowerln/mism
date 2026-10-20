@@ -8,7 +8,7 @@ use crate::interruption::Signal;
 use crate::minecraft_version;
 
 const DEFAULT_BASE_URL: &str = "https://fill.papermc.io/v3";
-const BASE_URL_VARIABLE: &str = "MMMM_PAPERMC_URL";
+const BASE_URL_VARIABLE: &str = "MISM_PAPERMC_URL";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -33,7 +33,7 @@ impl Error {
             Error::Http(error) => error.hint(),
             Error::MinecraftVersion(error) => error.hint(),
             Error::MinecraftVersionNotDistributed { project, .. } => Some(format!(
-                "run `mmmm versions {project}` to see the distributed Minecraft versions"
+                "run `mism versions {project}` to see the distributed Minecraft versions"
             )),
             Error::NoSupportedMinecraftVersion { .. } | Error::NoSoftwareVersion { .. } => None,
         }

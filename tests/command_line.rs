@@ -1,9 +1,9 @@
 mod common;
 
-use common::mmmm_process::{MmmmProcess, Output};
+use common::mism_process::{MismProcess, Output};
 
 fn run(arguments: &[&str]) -> Output {
-    MmmmProcess::new().arguments(arguments).run()
+    MismProcess::new().arguments(arguments).run()
 }
 
 /// cli-1: stdout
@@ -23,7 +23,7 @@ fn help_exits_with_zero() {
 fn version_prints_own_version_to_stdout() {
     assert_eq!(
         run(&["--version"]).stdout.trim(),
-        concat!("mmmm ", env!("CARGO_PKG_VERSION"))
+        concat!("mism ", env!("CARGO_PKG_VERSION"))
     );
 }
 
@@ -33,29 +33,29 @@ fn version_exits_with_zero() {
     assert_eq!(run(&["--version"]).exit_code, 0);
 }
 
-/// cli-3: `mmmm new --help` stdout
+/// cli-3: `mism new --help` stdout
 #[test]
 fn new_help_prints_usage_to_stdout() {
-    assert!(run(&["new", "--help"]).stdout.contains("Usage: mmmm new"));
+    assert!(run(&["new", "--help"]).stdout.contains("Usage: mism new"));
 }
 
-/// cli-3: `mmmm new --help` exit status
+/// cli-3: `mism new --help` exit status
 #[test]
 fn new_help_exits_with_zero() {
     assert_eq!(run(&["new", "--help"]).exit_code, 0);
 }
 
-/// cli-3: `mmmm versions --help` stdout
+/// cli-3: `mism versions --help` stdout
 #[test]
 fn versions_help_prints_usage_to_stdout() {
     assert!(
         run(&["versions", "--help"])
             .stdout
-            .contains("Usage: mmmm versions")
+            .contains("Usage: mism versions")
     );
 }
 
-/// cli-3: `mmmm versions --help` exit status
+/// cli-3: `mism versions --help` exit status
 #[test]
 fn versions_help_exits_with_zero() {
     assert_eq!(run(&["versions", "--help"]).exit_code, 0);
@@ -79,23 +79,23 @@ fn invalid_arguments_exit_with_two() {
     assert_eq!(run(&["no-such-subcommand"]).exit_code, 2);
 }
 
-/// cli-5: `mmmm new` usage text on stderr
+/// cli-5: `mism new` usage text on stderr
 #[test]
 fn new_unknown_software_prints_usage_to_stderr() {
     assert!(
         run(&["new", "spigot", "dir"])
             .stderr
-            .contains("Usage: mmmm new")
+            .contains("Usage: mism new")
     );
 }
 
-/// cli-5: `mmmm versions` usage text on stderr
+/// cli-5: `mism versions` usage text on stderr
 #[test]
 fn versions_unknown_software_prints_usage_to_stderr() {
     assert!(
         run(&["versions", "spigot"])
             .stderr
-            .contains("Usage: mmmm versions")
+            .contains("Usage: mism versions")
     );
 }
 

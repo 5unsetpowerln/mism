@@ -6,15 +6,15 @@ use std::time::Duration;
 
 use common::fake_java::Behavior;
 use common::fake_papermc::sha256_hex;
-use common::mmmm_process::{MmmmProcess, Output};
+use common::mism_process::{MismProcess, Output};
 use common::new_server_environment::{JAR_BYTES, NewServerEnvironment};
 
 const JAR_NAME: &str = "paper-26.3-206.jar";
 
-/// `mmmm new paper <target>` with `XDG_CACHE_HOME` set to the environment's.
-fn new_with_xdg(environment: &NewServerEnvironment, target: &Path, extra: &[&str]) -> MmmmProcess {
+/// `mism new paper <target>` with `XDG_CACHE_HOME` set to the environment's.
+fn new_with_xdg(environment: &NewServerEnvironment, target: &Path, extra: &[&str]) -> MismProcess {
     environment
-        .mmmm_new(["paper".as_ref(), target.as_os_str()])
+        .mism_new(["paper".as_ref(), target.as_os_str()])
         .arguments(extra)
         .environment("XDG_CACHE_HOME", environment.xdg_cache_home())
 }
@@ -22,7 +22,7 @@ fn new_with_xdg(environment: &NewServerEnvironment, target: &Path, extra: &[&str
 /// `<cache>/paper/<minecraft version>/<software version>`, the directory of one cached jar.
 fn cache_directory(cache: &Path, minecraft_version: &str, software_version: u64) -> PathBuf {
     cache
-        .join("mmmm/paper")
+        .join("mism/paper")
         .join(minecraft_version)
         .join(software_version.to_string())
 }
@@ -72,7 +72,7 @@ fn jar_is_cached_below_home_dot_cache_without_xdg_cache_home() {
     let environment = NewServerEnvironment::serving_paper_26_3(Behavior::Normal);
 
     environment
-        .mmmm_new(["paper".as_ref(), environment.server_path().as_os_str()])
+        .mism_new(["paper".as_ref(), environment.server_path().as_os_str()])
         .run();
 
     let jar = cache_directory(&environment.home().join(".cache"), "26.3", 206).join(JAR_NAME);
@@ -164,7 +164,7 @@ fn jar_whose_sha256_differs_is_reported() {
         output
             .stderr
             .lines()
-            .any(|line| line.starts_with("mmmm: the SHA-256 of ")
+            .any(|line| line.starts_with("mism: the SHA-256 of ")
                 && line.contains(&format!(
                     "but PaperMC publishes {}",
                     sha256_hex(b"some other jar")
@@ -236,7 +236,7 @@ fn simultaneous_downloads_of_one_jar_leave_one_file() {
     assert_eq!(files_below(&directory), vec![directory.join(JAR_NAME)]);
 }
 
-/// Runs two `mmmm new` processes at once for the same jar, which the fake PaperMC serves slowly
+/// Runs two `mism new` processes at once for the same jar, which the fake PaperMC serves slowly
 /// so that the downloads overlap.
 fn download_simultaneously() -> ([Output; 2], NewServerEnvironment) {
     let environment = NewServerEnvironment::new(Behavior::Normal);
@@ -251,7 +251,7 @@ fn download_simultaneously() -> ([Output; 2], NewServerEnvironment) {
     );
     let processes = ["first", "second"].map(|name| {
         environment
-            .mmmm_new([
+            .mism_new([
                 "paper".as_ref(),
                 environment.servers().join(name).as_os_str(),
             ])

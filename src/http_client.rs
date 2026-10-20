@@ -15,11 +15,11 @@ use ureq::{Agent, Body};
 
 use crate::interruption::{self, Signal};
 
-const USER_AGENT: &str = concat!("mmmm/", env!("CARGO_PKG_VERSION"), " (me@5unset.me)");
+const USER_AGENT: &str = concat!("mism/", env!("CARGO_PKG_VERSION"), " (me@5unset.me)");
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const JSON_TOTAL_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
-const IDLE_TIMEOUT_VARIABLE: &str = "MMMM_DOWNLOAD_IDLE_TIMEOUT";
+const IDLE_TIMEOUT_VARIABLE: &str = "MISM_DOWNLOAD_IDLE_TIMEOUT";
 const DOWNLOAD_CHUNK_SIZE: usize = 64 * 1024;
 
 #[derive(Debug, thiserror::Error)]
@@ -415,7 +415,7 @@ mod tests {
         }
     }
 
-    /// 「HTTP クライアント」 方法: every request carries the User-Agent `mmmm/<version> (me@5unset.me)`.
+    /// 「HTTP クライアント」 方法: every request carries the User-Agent `mism/<version> (me@5unset.me)`.
     #[test]
     fn request_carries_user_agent() {
         let server = FakeServer::start(vec![immediately(response("200 OK", b"{}"))]);
@@ -423,7 +423,7 @@ mod tests {
         assert_eq!(
             header_value(&server.request_head(), "user-agent").as_deref(),
             Some(concat!(
-                "mmmm/",
+                "mism/",
                 env!("CARGO_PKG_VERSION"),
                 " (me@5unset.me)"
             ))
@@ -493,7 +493,7 @@ mod tests {
         assert!(matches!(result, Err(Error::Interrupted(Signal::Interrupt))));
     }
 
-    /// 「全体の構成」: `MMMM_DOWNLOAD_IDLE_TIMEOUT` is a number of seconds and may have a fraction.
+    /// 「全体の構成」: `MISM_DOWNLOAD_IDLE_TIMEOUT` is a number of seconds and may have a fraction.
     #[test]
     fn idle_timeout_accepts_fractional_seconds() {
         assert_eq!(
@@ -502,7 +502,7 @@ mod tests {
         );
     }
 
-    /// 「全体の構成」: a `MMMM_DOWNLOAD_IDLE_TIMEOUT` that is not a number is an error.
+    /// 「全体の構成」: a `MISM_DOWNLOAD_IDLE_TIMEOUT` that is not a number is an error.
     #[test]
     fn idle_timeout_rejects_non_number() {
         assert!(matches!(

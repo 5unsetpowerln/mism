@@ -10,7 +10,7 @@ use crate::papermc_api::selection::{self, Selected};
 use crate::papermc_api::{self, HttpPaperMcApi};
 use crate::server_directory::ServerDirectory;
 use crate::server_directory::creation::{self, CachedJar};
-use crate::server_directory::mmmm_toml::MmmmToml;
+use crate::server_directory::mism_toml::MismToml;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -48,7 +48,7 @@ impl Error {
     }
 }
 
-/// The steps of 「mmmm new の手順と中断」: 1 to 3 in `creation::check_target_path`, 4 in
+/// The steps of 「mism new の手順と中断」: 1 to 3 in `creation::check_target_path`, 4 in
 /// `select_versions` and `cache_jar`, 5 to 8 in `creation::create_server_directory`, 9 in
 /// `print_server_directory`.
 pub fn run(arguments: &NewArguments) -> Result<(), Error> {
@@ -58,7 +58,7 @@ pub fn run(arguments: &NewArguments) -> Result<(), Error> {
     let project = project_name(arguments.software);
     let selected = select_versions(&client, project, arguments.version.as_deref())?;
     let cached_jar = cache_jar(&client, project, &selected)?;
-    let mmmm_toml = MmmmToml {
+    let mism_toml = MismToml {
         software: arguments.software.to_string(),
         minecraft_version: selected.minecraft_version.clone(),
         software_version: selected.software_version,
@@ -70,7 +70,7 @@ pub fn run(arguments: &NewArguments) -> Result<(), Error> {
             name: &selected.download.name,
             sha256: &selected.download.sha256,
         },
-        mmmm_toml,
+        mism_toml,
         selected.minimum_java_version,
     )?;
     print_server_directory(&server_directory)
@@ -101,13 +101,13 @@ fn cache_jar(client: &HttpClient, project: &str, selected: &Selected) -> Result<
 
 /// Step 9 (new-10).
 fn print_server_directory(server_directory: &ServerDirectory) -> Result<(), Error> {
-    let mmmm_toml = &server_directory.mmmm_toml;
+    let mism_toml = &server_directory.mism_toml;
     writeln!(
         io::stdout(),
         "{} {} {} {}",
-        mmmm_toml.software,
-        mmmm_toml.minecraft_version,
-        mmmm_toml.software_version,
+        mism_toml.software,
+        mism_toml.minecraft_version,
+        mism_toml.software_version,
         server_directory.path.display()
     )
     .map_err(Error::WriteStdout)

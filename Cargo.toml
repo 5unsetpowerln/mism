@@ -1,5 +1,5 @@
 [package]
-name = "mmmm"
+name = "mism"
 version = "0.1.0"
 edition = "2024"
 description = "Minecraft server manager for Paper and Folia"

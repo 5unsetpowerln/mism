@@ -13,34 +13,34 @@ use serde_json::{Value, json};
 
 use common::fake_java::{self, Behavior};
 use common::fake_papermc;
-use common::mmmm_process::{Output, RunningMmmm};
+use common::mism_process::{Output, RunningMism};
 use common::new_server_environment::{JAR_BYTES, NewServerEnvironment};
 use common::slow_jar_server::SlowJarServer;
 
 const JAR_NAME: &str = "paper-26.3-206.jar";
-const IDLE_TIMEOUT_VARIABLE: &str = "MMMM_DOWNLOAD_IDLE_TIMEOUT";
+const IDLE_TIMEOUT_VARIABLE: &str = "MISM_DOWNLOAD_IDLE_TIMEOUT";
 
-/// Runs `mmmm new <software> <the environment's server path> <options>`.
+/// Runs `mism new <software> <the environment's server path> <options>`.
 fn run_new(environment: &NewServerEnvironment, software: &str, options: &[&str]) -> Output {
     let mut arguments = vec![
         OsString::from(software),
         environment.server_path().into_os_string(),
     ];
     arguments.extend(options.iter().map(OsString::from));
-    environment.mmmm_new(arguments).run()
+    environment.mism_new(arguments).run()
 }
 
-/// Starts `mmmm new paper <the environment's server path>`.
-fn spawn_new_paper(environment: &NewServerEnvironment) -> RunningMmmm {
+/// Starts `mism new paper <the environment's server path>`.
+fn spawn_new_paper(environment: &NewServerEnvironment) -> RunningMism {
     environment
-        .mmmm_new([
+        .mism_new([
             OsString::from("paper"),
             environment.server_path().into_os_string(),
         ])
         .spawn()
 }
 
-/// Runs `mmmm new paper <path>` against the saved Paper version list with the fake `java`
+/// Runs `mism new paper <path>` against the saved Paper version list with the fake `java`
 /// `behavior`, after `prepare` has changed the environment.
 fn create_paper_server_after(
     behavior: Behavior,
@@ -94,7 +94,7 @@ fn saved_paper_version_list() -> String {
     fake_papermc::saved_version_list("paper").to_string()
 }
 
-/// The space-separated fields of what `mmmm new` printed to stdout.
+/// The space-separated fields of what `mism new` printed to stdout.
 fn printed_fields(output: &Output) -> Vec<&str> {
     output.stdout.trim_end().split(' ').collect()
 }
@@ -103,16 +103,16 @@ fn read_created_file(environment: &NewServerEnvironment, name: &str) -> String {
     fs::read_to_string(environment.server_path().join(name)).unwrap()
 }
 
-fn read_mmmm_toml(environment: &NewServerEnvironment) -> toml::Table {
-    toml::from_str(&read_created_file(environment, "mmmm.toml")).unwrap()
+fn read_mism_toml(environment: &NewServerEnvironment) -> toml::Table {
+    toml::from_str(&read_created_file(environment, "mism.toml")).unwrap()
 }
 
-/// The first line of mmmm's own error report; the server's output may come before it.
+/// The first line of mism's own error report; the server's output may come before it.
 fn error_line(output: &Output) -> &str {
     output
         .stderr
         .lines()
-        .find(|line| line.starts_with("mmmm: "))
+        .find(|line| line.starts_with("mism: "))
         .unwrap_or_else(|| panic!("stderr has no error: {}", output.stderr))
 }
 
@@ -124,12 +124,12 @@ fn nothing_exists_at(path: &Path) -> bool {
     matches!(fs::symlink_metadata(path), Err(error) if error.kind() == ErrorKind::NotFound)
 }
 
-/// The names of the entries of `directory` that are mmmm's working directories.
+/// The names of the entries of `directory` that are mism's working directories.
 fn working_directories(directory: &Path) -> Vec<String> {
     fs::read_dir(directory)
         .unwrap()
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
-        .filter(|name| name.starts_with(".mmmm-tmp-"))
+        .filter(|name| name.starts_with(".mism-tmp-"))
         .collect()
 }
 
@@ -155,12 +155,12 @@ fn create_with_dangling_symlink() -> (NewServerEnvironment, Output) {
     })
 }
 
-/// `mmmm new paper <servers>/missing/survival`, whose parent does not exist.
+/// `mism new paper <servers>/missing/survival`, whose parent does not exist.
 fn create_under_missing_parent() -> (NewServerEnvironment, Output) {
     let environment = NewServerEnvironment::serving_paper_26_3(Behavior::Normal);
     let path = environment.servers().join("missing/survival");
     let output = environment
-        .mmmm_new([OsString::from("paper"), path.into_os_string()])
+        .mism_new([OsString::from("paper"), path.into_os_string()])
         .run();
     (environment, output)
 }
@@ -179,16 +179,16 @@ fn create_without_supported_version() -> (NewServerEnvironment, Output) {
     (environment, output)
 }
 
-/// Returns the base URL mmmm failed to reach too.
+/// Returns the base URL mism failed to reach too.
 fn create_against_unreachable_papermc() -> (NewServerEnvironment, Output, String) {
     let environment = NewServerEnvironment::serving_paper_26_3(Behavior::Normal);
     let base_url = fake_papermc::unreachable_base_url();
     let output = environment
-        .mmmm_new([
+        .mism_new([
             OsString::from("paper"),
             environment.server_path().into_os_string(),
         ])
-        .environment("MMMM_PAPERMC_URL", &base_url)
+        .environment("MISM_PAPERMC_URL", &base_url)
         .run();
     (environment, output, base_url)
 }
@@ -203,7 +203,7 @@ fn create_with_wrong_published_sha256() -> (NewServerEnvironment, Output, String
         .mount_jar_download("paper", "26.3", 206, JAR_BYTES, &published);
     let output = run_new(&environment, "paper", &[]);
     let expected = format!(
-        "mmmm: the SHA-256 of {jar_url} is {}, but PaperMC publishes {published}",
+        "mism: the SHA-256 of {jar_url} is {}, but PaperMC publishes {published}",
         fake_papermc::sha256_hex(JAR_BYTES)
     );
     (environment, output, expected)
@@ -219,14 +219,14 @@ struct InterruptedRun {
     server_pid: Pid,
 }
 
-/// Runs `mmmm new paper <path>` with the `Hangs` fake `java`, and sends `signal` to mmmm once the
+/// Runs `mism new paper <path>` with the `Hangs` fake `java`, and sends `signal` to mism once the
 /// server is running.
 fn interrupt_while_the_server_runs(signal: Signal) -> InterruptedRun {
     let environment = NewServerEnvironment::serving_paper_26_3(Behavior::Hangs);
-    let mmmm = spawn_new_paper(&environment);
+    let mism = spawn_new_paper(&environment);
     let server_pid = environment.fake_java.wait_for_server_pid();
-    mmmm.send(signal);
-    let output = mmmm.wait();
+    mism.send(signal);
+    let output = mism.wait();
     InterruptedRun {
         environment,
         output,
@@ -234,13 +234,13 @@ fn interrupt_while_the_server_runs(signal: Signal) -> InterruptedRun {
     }
 }
 
-/// sel-1: through `mmmm.toml`, the newest SUPPORTED version of the saved list (26.3) is chosen.
+/// sel-1: through `mism.toml`, the newest SUPPORTED version of the saved list (26.3) is chosen.
 #[test]
 fn omitted_version_records_the_newest_supported_version() {
     let (environment, _output) = create_paper_server(Behavior::Normal);
 
     assert_eq!(
-        read_mmmm_toml(&environment)["minecraft_version"].as_str(),
+        read_mism_toml(&environment)["minecraft_version"].as_str(),
         Some("26.3")
     );
 }
@@ -283,7 +283,7 @@ fn requested_version_with_another_spelling_is_not_distributed() {
 
     assert_eq!(
         error_line(&output),
-        "mmmm: PaperMC does not distribute paper for Minecraft 26.03"
+        "mism: PaperMC does not distribute paper for Minecraft 26.03"
     );
 }
 
@@ -298,7 +298,7 @@ fn largest_software_version_is_chosen() {
     run_new(&environment, "paper", &[]);
 
     assert_eq!(
-        read_mmmm_toml(&environment)["software_version"].as_integer(),
+        read_mism_toml(&environment)["software_version"].as_integer(),
         Some(206)
     );
 }
@@ -309,7 +309,7 @@ fn relative_path_is_created_under_the_current_directory() {
     let environment = NewServerEnvironment::serving_paper_26_3(Behavior::Normal);
 
     environment
-        .mmmm_new(["paper", "survival"])
+        .mism_new(["paper", "survival"])
         .working_directory(environment.servers())
         .run();
 
@@ -322,7 +322,7 @@ fn relative_path_is_printed_as_an_absolute_path() {
     let environment = NewServerEnvironment::serving_paper_26_3(Behavior::Normal);
 
     let output = environment
-        .mmmm_new(["paper", "survival"])
+        .mism_new(["paper", "survival"])
         .working_directory(environment.servers())
         .run();
 
@@ -382,7 +382,7 @@ fn server_is_started_once() {
     assert_eq!(launches, [format!("-jar {JAR_NAME} --nogui")]);
 }
 
-/// new-5: the server's stdout reaches mmmm's stderr.
+/// new-5: the server's stdout reaches mism's stderr.
 #[test]
 fn server_stdout_is_copied_to_stderr() {
     let (_environment, output) = create_paper_server(Behavior::Normal);
@@ -390,7 +390,7 @@ fn server_stdout_is_copied_to_stderr() {
     assert!(has_line(&output, &fake_java::server_stdout_line(JAR_NAME)));
 }
 
-/// new-5: the server's stderr reaches mmmm's stderr.
+/// new-5: the server's stderr reaches mism's stderr.
 #[test]
 fn server_stderr_is_copied_to_stderr() {
     let (_environment, output) = create_paper_server(Behavior::Normal);
@@ -425,8 +425,8 @@ fn eula_txt_keeps_what_else_the_server_wrote() {
     );
 }
 
-/// new-7: stdin stays open and receives nothing (see `MmmmProcess::spawn`), so a confirmation
-/// prompt would keep mmmm from exiting.
+/// new-7: stdin stays open and receives nothing (see `MismProcess::spawn`), so a confirmation
+/// prompt would keep mism from exiting.
 #[test]
 fn eula_is_agreed_to_without_input() {
     let (_environment, output) = create_paper_server(Behavior::Normal);
@@ -449,19 +449,19 @@ fn server_directory_holds_server_properties() {
 
 /// new-9: Paper, its Minecraft version, and its software version are recorded.
 #[test]
-fn mmmm_toml_records_the_software_and_its_versions() {
+fn mism_toml_records_the_software_and_its_versions() {
     let (environment, _output) = create_paper_server(Behavior::Normal);
 
     let expected: toml::Table = toml::from_str(
         "software = \"paper\"\nminecraft_version = \"26.3\"\nsoftware_version = 206",
     )
     .unwrap();
-    assert_eq!(read_mmmm_toml(&environment), expected);
+    assert_eq!(read_mism_toml(&environment), expected);
 }
 
 /// new-9: Folia is recorded as `folia`.
 #[test]
-fn mmmm_toml_records_folia() {
+fn mism_toml_records_folia() {
     let environment = NewServerEnvironment::new(Behavior::Normal);
     environment.papermc.mount_version_list_from_fixture("folia");
     environment.papermc.mount_jar_download(
@@ -475,7 +475,7 @@ fn mmmm_toml_records_folia() {
     run_new(&environment, "folia", &[]);
 
     assert_eq!(
-        read_mmmm_toml(&environment)["software"].as_str(),
+        read_mism_toml(&environment)["software"].as_str(),
         Some("folia")
     );
 }
@@ -528,7 +528,7 @@ fn existing_file_at_the_path_is_an_error() {
     assert_eq!(
         error_line(&output),
         format!(
-            "mmmm: {} already exists",
+            "mism: {} already exists",
             environment.server_path().display()
         )
     );
@@ -542,7 +542,7 @@ fn existing_directory_at_the_path_is_an_error() {
     assert_eq!(
         error_line(&output),
         format!(
-            "mmmm: {} already exists",
+            "mism: {} already exists",
             environment.server_path().display()
         )
     );
@@ -556,7 +556,7 @@ fn dangling_symlink_at_the_path_is_an_error() {
     assert_eq!(
         error_line(&output),
         format!(
-            "mmmm: {} already exists",
+            "mism: {} already exists",
             environment.server_path().display()
         )
     );
@@ -570,7 +570,7 @@ fn missing_parent_directory_is_an_error() {
     assert_eq!(
         error_line(&output),
         format!(
-            "mmmm: the parent directory {} does not exist",
+            "mism: the parent directory {} does not exist",
             environment.servers().join("missing").display()
         )
     );
@@ -583,7 +583,7 @@ fn version_that_is_not_distributed_is_an_error() {
 
     assert_eq!(
         error_line(&output),
-        "mmmm: PaperMC does not distribute paper for Minecraft 9.9.9"
+        "mism: PaperMC does not distribute paper for Minecraft 9.9.9"
     );
 }
 
@@ -594,7 +594,7 @@ fn list_without_supported_version_is_an_error() {
 
     assert_eq!(
         error_line(&output),
-        "mmmm: PaperMC lists no supported Minecraft version for paper"
+        "mism: PaperMC lists no supported Minecraft version for paper"
     );
 }
 
@@ -605,7 +605,7 @@ fn unreachable_papermc_is_an_error() {
 
     assert_eq!(
         error_line(&output),
-        format!("mmmm: request to {base_url}/projects/paper/versions failed")
+        format!("mism: request to {base_url}/projects/paper/versions failed")
     );
 }
 
@@ -623,7 +623,7 @@ fn server_that_creates_neither_file_is_an_error() {
     let (_environment, output) = create_with_server_writing_nothing();
 
     assert!(error_line(&output).starts_with(
-        "mmmm: the server exited (exit status: 0) without creating both eula.txt and server.properties in "
+        "mism: the server exited (exit status: 0) without creating both eula.txt and server.properties in "
     ));
 }
 
@@ -667,7 +667,7 @@ fn nothing_exists_at_the_path_after_a_failed_initial_launch() {
     assert!(nothing_exists_at(&environment.server_path()));
 }
 
-/// err-8 (「mmmm new の手順と中断」 方法: a failure in steps 5 to 8 removes the working directory):
+/// err-8 (「mism new の手順と中断」 方法: a failure in steps 5 to 8 removes the working directory):
 /// after err-7 no working directory is left beside the path.
 #[test]
 fn no_working_directory_is_left_after_a_failed_initial_launch() {
@@ -755,7 +755,7 @@ fn version_that_is_not_distributed_has_a_hint() {
 
     assert!(has_line(
         &output,
-        "hint: run `mmmm versions paper` to see the distributed Minecraft versions"
+        "hint: run `mism versions paper` to see the distributed Minecraft versions"
     ));
 }
 
@@ -786,15 +786,15 @@ fn sigint_exits_with_status_130() {
     assert_eq!(run.output.exit_code, 130);
 }
 
-/// int-1: SIGINT is reported as the reason mmmm stopped.
+/// int-1: SIGINT is reported as the reason mism stopped.
 #[test]
 fn sigint_is_reported() {
     let run = interrupt_while_the_server_runs(Signal::SIGINT);
 
-    assert_eq!(error_line(&run.output), "mmmm: interrupted by SIGINT");
+    assert_eq!(error_line(&run.output), "mism: interrupted by SIGINT");
 }
 
-/// int-1, d-new-3: on SIGINT the server has exited by the time mmmm exits.
+/// int-1, d-new-3: on SIGINT the server has exited by the time mism exits.
 #[test]
 fn sigint_stops_the_server() {
     let run = interrupt_while_the_server_runs(Signal::SIGINT);
@@ -810,7 +810,7 @@ fn sigint_leaves_nothing_at_the_path() {
     assert!(nothing_exists_at(&run.environment.server_path()));
 }
 
-/// int-1 (「mmmm new の手順と中断」 方法: the working directory is removed after the server exits):
+/// int-1 (「mism new の手順と中断」 方法: the working directory is removed after the server exits):
 /// on SIGINT no working directory is left beside the path.
 #[test]
 fn sigint_leaves_no_working_directory() {
@@ -830,7 +830,7 @@ fn sigterm_exits_with_status_143() {
     assert_eq!(run.output.exit_code, 143);
 }
 
-/// int-1, d-new-3: on SIGTERM the server has exited by the time mmmm exits.
+/// int-1, d-new-3: on SIGTERM the server has exited by the time mism exits.
 #[test]
 fn sigterm_stops_the_server() {
     let run = interrupt_while_the_server_runs(Signal::SIGTERM);
@@ -846,7 +846,7 @@ fn sigterm_leaves_nothing_at_the_path() {
     assert!(nothing_exists_at(&run.environment.server_path()));
 }
 
-/// int-1 (「mmmm new の手順と中断」 方法: the working directory is removed after the server exits):
+/// int-1 (「mism new の手順と中断」 方法: the working directory is removed after the server exits):
 /// on SIGTERM no working directory is left beside the path.
 #[test]
 fn sigterm_leaves_no_working_directory() {
@@ -879,15 +879,15 @@ fn saved_paper_entry(minecraft_version: &str) -> Value {
         .clone()
 }
 
-/// Runs `mmmm new paper <path>` with the `WaitsForRelease` fake `java`, and creates an empty
-/// directory at the path while the server runs, after mmmm has checked the path.
+/// Runs `mism new paper <path>` with the `WaitsForRelease` fake `java`, and creates an empty
+/// directory at the path while the server runs, after mism has checked the path.
 fn create_while_the_path_appears() -> (NewServerEnvironment, Output) {
     let environment = NewServerEnvironment::serving_paper_26_3(Behavior::WaitsForRelease);
-    let mmmm = spawn_new_paper(&environment);
+    let mism = spawn_new_paper(&environment);
     environment.fake_java.wait_for_server_pid();
     fs::create_dir(environment.server_path()).unwrap();
     environment.fake_java.release_server();
-    let output = mmmm.wait();
+    let output = mism.wait();
     (environment, output)
 }
 
@@ -897,7 +897,7 @@ fn create_without_java_on_path() -> (NewServerEnvironment, Output) {
     let directory_without_java = environment.home().join("bin");
     fs::create_dir(&directory_without_java).unwrap();
     let output = environment
-        .mmmm_new([
+        .mism_new([
             OsString::from("paper"),
             environment.server_path().into_os_string(),
         ])
@@ -912,7 +912,7 @@ fn create_with_old_java() -> (NewServerEnvironment, Output) {
 }
 
 /// The jar's response starts 3 seconds after its request, and the idle timeout is 0.3 seconds.
-/// Had mmmm waited for the response, it would have succeeded.
+/// Had mism waited for the response, it would have succeeded.
 fn create_with_a_stalled_jar_download() -> (NewServerEnvironment, Output) {
     let environment = NewServerEnvironment::new(Behavior::Normal);
     environment.papermc.mount_version_list_from_fixture("paper");
@@ -925,7 +925,7 @@ fn create_with_a_stalled_jar_download() -> (NewServerEnvironment, Output) {
         Duration::from_secs(3),
     );
     let output = environment
-        .mmmm_new([
+        .mism_new([
             OsString::from("paper"),
             environment.server_path().into_os_string(),
         ])
@@ -949,7 +949,7 @@ fn create_with_a_slow_jar_download() -> (NewServerEnvironment, Output) {
         jar_server.url(),
     );
     let output = environment
-        .mmmm_new([
+        .mism_new([
             OsString::from("paper"),
             environment.server_path().into_os_string(),
         ])
@@ -1015,16 +1015,16 @@ fn omitted_version_follows_release_order_over_list_order() {
     assert_eq!(printed_fields(&output)[1], "26.3");
 }
 
-/// d-new-1: nothing exists at the path while the server runs, nor after mmmm is interrupted then.
+/// d-new-1: nothing exists at the path while the server runs, nor after mism is interrupted then.
 #[test]
 fn nothing_exists_at_the_path_before_the_preparation_is_complete() {
     let environment = NewServerEnvironment::serving_paper_26_3(Behavior::Hangs);
-    let mmmm = spawn_new_paper(&environment);
+    let mism = spawn_new_paper(&environment);
     environment.fake_java.wait_for_server_pid();
 
     let while_the_server_runs = nothing_exists_at(&environment.server_path());
-    mmmm.send(Signal::SIGINT);
-    mmmm.wait();
+    mism.send(Signal::SIGINT);
+    mism.wait();
     let after_the_interruption = nothing_exists_at(&environment.server_path());
 
     assert_eq!(
@@ -1049,7 +1049,7 @@ fn path_that_appears_during_the_preparation_is_an_error() {
     assert_eq!(
         error_line(&output),
         format!(
-            "mmmm: {} appeared while the server directory was being prepared",
+            "mism: {} appeared while the server directory was being prepared",
             environment.server_path().display()
         )
     );
@@ -1068,13 +1068,13 @@ fn path_that_appears_during_the_preparation_leaves_no_working_directory() {
 
 /// d-new-4: SIGKILL while the server runs leaves nothing at the path.
 #[test]
-fn nothing_exists_at_the_path_after_mmmm_is_killed() {
+fn nothing_exists_at_the_path_after_mism_is_killed() {
     let environment = NewServerEnvironment::serving_paper_26_3(Behavior::Hangs);
-    let mmmm = spawn_new_paper(&environment);
+    let mism = spawn_new_paper(&environment);
     let server_pid = environment.fake_java.wait_for_server_pid();
 
-    mmmm.kill();
-    // In its own process group, the server outlives mmmm.
+    mism.kill();
+    // In its own process group, the server outlives mism.
     kill(server_pid, Signal::SIGKILL).unwrap();
 
     assert!(nothing_exists_at(&environment.server_path()));
@@ -1104,7 +1104,7 @@ fn missing_java_exits_with_status_1() {
 fn missing_java_is_an_error() {
     let (_environment, output) = create_without_java_on_path();
 
-    assert_eq!(error_line(&output), "mmmm: `java` was not found on PATH");
+    assert_eq!(error_line(&output), "mism: `java` was not found on PATH");
 }
 
 /// d-launch-1: no server is started.
@@ -1131,7 +1131,7 @@ fn old_java_is_an_error() {
     assert_eq!(
         error_line(&output),
         format!(
-            "mmmm: {} is Java 21, older than the required Java 25",
+            "mism: {} is Java 21, older than the required Java 25",
             environment.fake_java.directory().join("java").display()
         )
     );
@@ -1151,8 +1151,8 @@ fn old_java_starts_no_server() {
     );
 }
 
-/// d-http-1: exit status. The delayed response would have let mmmm succeed, so status 1 shows
-/// that mmmm stopped waiting before it arrived.
+/// d-http-1: exit status. The delayed response would have let mism succeed, so status 1 shows
+/// that mism stopped waiting before it arrived.
 #[test]
 fn stalled_jar_download_exits_with_status_1() {
     let (_environment, output) = create_with_a_stalled_jar_download();
@@ -1190,12 +1190,12 @@ fn slow_jar_download_delivers_the_whole_jar() {
     );
 }
 
-/// d-cli-1: the error output of `mmmm new` starts with `mmmm: `.
+/// d-cli-1: the error output of `mism new` starts with `mism: `.
 #[test]
-fn error_output_starts_with_mmmm_prefix() {
+fn error_output_starts_with_mism_prefix() {
     let (_environment, output, _base_url) = create_against_unreachable_papermc();
 
-    assert!(output.stderr.starts_with("mmmm: "));
+    assert!(output.stderr.starts_with("mism: "));
 }
 
 /// d-cli-2: the chain is the failed request (`http_client::Error::Request`, wrapped by the

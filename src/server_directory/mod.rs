@@ -1,13 +1,13 @@
 pub mod creation;
 mod initial_launch;
-pub mod mmmm_toml;
+pub mod mism_toml;
 
 use std::path::PathBuf;
 
-use mmmm_toml::MmmmToml;
+use mism_toml::MismToml;
 
-/// A server directory that `mmmm new` created: where it is, and what its `mmmm.toml` records.
+/// A server directory that `mism new` created: where it is, and what its `mism.toml` records.
 pub struct ServerDirectory {
     pub path: PathBuf,
-    pub mmmm_toml: MmmmToml,
+    pub mism_toml: MismToml,
 }

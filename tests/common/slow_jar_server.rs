@@ -31,7 +31,7 @@ impl SlowJarServer {
             for piece in pieces {
                 thread::sleep(pause);
                 if stream.write_all(&piece).is_err() {
-                    return; // mmmm has closed the connection.
+                    return; // mism has closed the connection.
                 }
             }
         });

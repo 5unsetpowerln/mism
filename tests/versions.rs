@@ -1,15 +1,15 @@
 mod common;
 
 use common::fake_papermc::{self, FakePaperMc};
-use common::mmmm_process::{MmmmProcess, Output};
+use common::mism_process::{MismProcess, Output};
 use common::temporary_directory;
 
 fn run_versions(software: &str, papermc_url: &str) -> Output {
     let home = temporary_directory::create();
-    MmmmProcess::new()
+    MismProcess::new()
         .arguments(["versions", software])
         .environment("HOME", home.path())
-        .environment("MMMM_PAPERMC_URL", papermc_url)
+        .environment("MISM_PAPERMC_URL", papermc_url)
         .run()
 }
 
@@ -134,10 +134,10 @@ fn list_in_the_wrong_order_is_printed_newest_first() {
 
 /// d-cli-1
 #[test]
-fn error_output_starts_with_mmmm_prefix() {
+fn error_output_starts_with_mism_prefix() {
     let output = run_versions("paper", &fake_papermc::unreachable_base_url());
 
-    assert!(output.stderr.starts_with("mmmm: "));
+    assert!(output.stderr.starts_with("mism: "));
 }
 
 /// d-cli-2
@@ -157,12 +157,12 @@ fn each_level_of_the_error_chain_has_a_caused_by_line() {
 /// The real-API test of the design's test section.
 #[test]
 fn real_api_lists_paper_versions() {
-    if std::env::var("MMMM_TEST_REAL_API").as_deref() != Ok("1") {
+    if std::env::var("MISM_TEST_REAL_API").as_deref() != Ok("1") {
         return;
     }
     let home = temporary_directory::create();
 
-    let output = MmmmProcess::new()
+    let output = MismProcess::new()
         .arguments(["versions", "paper"])
         .environment("HOME", home.path())
         .run();

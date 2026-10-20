@@ -15,19 +15,19 @@ pub struct Output {
     pub exit_code: i32,
 }
 
-/// Runs the built `mmmm` binary with a clean environment.
-pub struct MmmmProcess {
+/// Runs the built `mism` binary with a clean environment.
+pub struct MismProcess {
     command: Command,
 }
 
-impl MmmmProcess {
-    pub fn new() -> MmmmProcess {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_mmmm"));
+impl MismProcess {
+    pub fn new() -> MismProcess {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_mism"));
         command.env_clear();
-        MmmmProcess { command }
+        MismProcess { command }
     }
 
-    pub fn arguments<I, S>(mut self, arguments: I) -> MmmmProcess
+    pub fn arguments<I, S>(mut self, arguments: I) -> MismProcess
     where
         I: IntoIterator<Item = S>,
         S: Into<OsString>,
@@ -36,24 +36,24 @@ impl MmmmProcess {
         self
     }
 
-    pub fn environment(mut self, name: &str, value: impl Into<OsString>) -> MmmmProcess {
+    pub fn environment(mut self, name: &str, value: impl Into<OsString>) -> MismProcess {
         self.command.env(name, value.into());
         self
     }
 
-    pub fn working_directory(mut self, directory: impl Into<PathBuf>) -> MmmmProcess {
+    pub fn working_directory(mut self, directory: impl Into<PathBuf>) -> MismProcess {
         self.command.current_dir(directory.into());
         self
     }
 
-    /// Runs mmmm to its exit, failing the test if that takes longer than 30 seconds.
+    /// Runs mism to its exit, failing the test if that takes longer than 30 seconds.
     pub fn run(self) -> Output {
         self.spawn().wait()
     }
 
-    /// Starts mmmm. Its stdin is a pipe that stays open and receives nothing, so mmmm waiting for
+    /// Starts mism. Its stdin is a pipe that stays open and receives nothing, so mism waiting for
     /// input would never exit.
-    pub fn spawn(mut self) -> RunningMmmm {
+    pub fn spawn(mut self) -> RunningMism {
         let child = self
             .command
             .stdin(Stdio::piped())
@@ -61,34 +61,34 @@ impl MmmmProcess {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        RunningMmmm { child }
+        RunningMism { child }
     }
 }
 
-pub struct RunningMmmm {
+pub struct RunningMism {
     child: Child,
 }
 
-impl RunningMmmm {
+impl RunningMism {
     pub fn send(&self, signal: Signal) {
         let pid = Pid::from_raw(i32::try_from(self.child.id()).unwrap());
         kill(pid, signal).unwrap();
     }
 
-    /// Kills mmmm with SIGKILL and reaps it. Its output is not read: a server it started may
+    /// Kills mism with SIGKILL and reaps it. Its output is not read: a server it started may
     /// outlive it and hold the pipes open.
     pub fn kill(mut self) {
         self.child.kill().unwrap();
         self.child.wait().unwrap();
     }
 
-    /// Waits for mmmm to exit, failing the test if that takes longer than 30 seconds.
+    /// Waits for mism to exit, failing the test if that takes longer than 30 seconds.
     pub fn wait(mut self) -> Output {
         let deadline = Instant::now() + EXIT_DEADLINE;
         while self.child.try_wait().unwrap().is_none() {
             if Instant::now() > deadline {
                 self.child.kill().unwrap();
-                panic!("mmmm did not exit within {EXIT_DEADLINE:?}");
+                panic!("mism did not exit within {EXIT_DEADLINE:?}");
             }
             thread::sleep(Duration::from_millis(10));
         }
@@ -96,7 +96,7 @@ impl RunningMmmm {
         Output {
             stdout: String::from_utf8(output.stdout).unwrap(),
             stderr: String::from_utf8(output.stderr).unwrap(),
-            exit_code: output.status.code().expect("mmmm was killed by a signal"),
+            exit_code: output.status.code().expect("mism was killed by a signal"),
         }
     }
 }
