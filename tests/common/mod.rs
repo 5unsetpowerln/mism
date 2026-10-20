@@ -5,5 +5,7 @@ pub mod fake_java;
 pub mod fake_papermc;
 pub mod mism_process;
 pub mod new_server_environment;
+pub mod pseudo_terminal;
+pub mod server_output;
 pub mod slow_jar_server;
 pub mod temporary_directory;

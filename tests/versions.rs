@@ -20,10 +20,17 @@ fn run_versions_against_fixture(software: &str) -> (Output, FakePaperMc) {
     (output, papermc)
 }
 
+/// The Minecraft version of each line of stdout, which is `mism: `, the version, a tab, and the
+/// support status.
 fn version_ids(stdout: &str) -> Vec<&str> {
     stdout
         .lines()
-        .map(|line| line.split('\t').next().unwrap())
+        .map(|line| {
+            let listed = line
+                .strip_prefix("mism: ")
+                .unwrap_or_else(|| panic!("the line lacks `mism: `: {line}"));
+            listed.split('\t').next().unwrap()
+        })
         .collect()
 }
 
@@ -73,9 +80,9 @@ fn each_line_is_the_id_a_tab_and_the_support_status() {
     let (output, _papermc) = run_versions_against_fixture("folia");
 
     assert!(
-        output
-            .stdout
-            .starts_with("26.3\tSUPPORTED\n26.2\tDEPRECATED\n26.1.2\tUNSUPPORTED\n")
+        output.stdout.starts_with(
+            "mism: 26.3\tSUPPORTED\nmism: 26.2\tDEPRECATED\nmism: 26.1.2\tUNSUPPORTED\n"
+        )
     );
 }
 
@@ -149,7 +156,7 @@ fn each_level_of_the_error_chain_has_a_caused_by_line() {
     let depth = output
         .stderr
         .lines()
-        .filter(|line| line.starts_with("  caused by: "))
+        .filter(|line| line.starts_with("mism: caused by: "))
         .count();
     assert_eq!(depth, 1);
 }

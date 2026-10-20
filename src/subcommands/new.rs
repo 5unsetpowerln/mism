@@ -1,4 +1,3 @@
-use std::io::{self, Write};
 use std::path::PathBuf;
 
 use super::project_name;
@@ -6,6 +5,7 @@ use crate::command_line::NewArguments;
 use crate::http_client::{self, HttpClient};
 use crate::interruption::Signal;
 use crate::jar_cache;
+use crate::output;
 use crate::papermc_api::selection::{self, Selected};
 use crate::papermc_api::{self, HttpPaperMcApi};
 use crate::server_directory::ServerDirectory;
@@ -22,8 +22,8 @@ pub enum Error {
     PaperMcApi(#[from] papermc_api::Error),
     #[error(transparent)]
     JarCache(#[from] jar_cache::Error),
-    #[error("failed to write the created server directory to stdout")]
-    WriteStdout(#[source] io::Error),
+    #[error(transparent)]
+    Output(#[from] output::Error),
 }
 
 impl Error {
@@ -33,7 +33,7 @@ impl Error {
             Error::HttpClient(error) => error.hint(),
             Error::PaperMcApi(error) => error.hint(),
             Error::JarCache(error) => error.hint(),
-            Error::WriteStdout(_) => None,
+            Error::Output(error) => error.hint(),
         }
     }
 
@@ -43,7 +43,7 @@ impl Error {
             Error::HttpClient(error) => error.interrupted_by(),
             Error::PaperMcApi(error) => error.interrupted_by(),
             Error::JarCache(error) => error.interrupted_by(),
-            Error::WriteStdout(_) => None,
+            Error::Output(_) => None,
         }
     }
 }
@@ -99,16 +99,14 @@ fn cache_jar(client: &HttpClient, project: &str, selected: &Selected) -> Result<
     )?)
 }
 
-/// Step 9 (new-10).
+/// Step 9 (new-10, out-1).
 fn print_server_directory(server_directory: &ServerDirectory) -> Result<(), Error> {
     let mism_toml = &server_directory.mism_toml;
-    writeln!(
-        io::stdout(),
+    Ok(output::write_to_stdout(&format!(
         "{} {} {} {}",
         mism_toml.software,
         mism_toml.minecraft_version,
         mism_toml.software_version,
         server_directory.path.display()
-    )
-    .map_err(Error::WriteStdout)
+    ))?)
 }

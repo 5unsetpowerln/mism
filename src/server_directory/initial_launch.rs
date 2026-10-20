@@ -14,6 +14,7 @@ use nix::sys::signal::killpg;
 use nix::unistd::{AccessFlags, Pid, access};
 
 use crate::interruption::{self, Signal};
+use crate::output;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// How long an interrupted server may take to exit after SIGTERM before it gets SIGKILL.
@@ -93,6 +94,8 @@ pub enum Error {
         #[source]
         source: io::Error,
     },
+    #[error(transparent)]
+    Output(#[from] output::Error),
     #[error("interrupted by {0}")]
     Interrupted(Signal),
 }
@@ -111,6 +114,7 @@ impl Error {
             Error::InitialLaunchFailed { .. } => {
                 Some("see the server log printed above for why the server stopped".to_owned())
             }
+            Error::Output(error) => error.hint(),
             _ => None,
         }
     }
@@ -150,8 +154,7 @@ fn launch_with_path_variable(
         minimum_java_version,
     })?;
     check_java_version(&java, minimum_java_version)?;
-    let mut server = start_server(&java, working_directory, jar_name)?;
-    let status = wait_for_exit(&mut server)?;
+    let status = run_server(&java, working_directory, jar_name)?;
     check_generated_files(working_directory, status)?;
     agree_to_eula(working_directory)
 }
@@ -230,6 +233,27 @@ fn leading_number(text: &str) -> Option<u32> {
     text[..end].parse().ok()
 }
 
+/// How the server's process ended.
+enum ServerExit {
+    /// The server exited by itself.
+    Exited(ExitStatus),
+    /// mism stopped the server because this signal arrived.
+    Stopped(Signal),
+}
+
+/// Steps 3 and 4: runs the server with its output between the line announcing it and the line
+/// ending it (out-2), and returns the server's exit status.
+fn run_server(java: &Path, working_directory: &Path, jar_name: &str) -> Result<ExitStatus, Error> {
+    output::write_external_output_start(jar_name)?;
+    let mut server = start_server(java, working_directory, jar_name)?;
+    let exit = wait_for_exit(&mut server)?;
+    output::write_external_output_end(jar_name)?;
+    match exit {
+        ServerExit::Exited(status) => Ok(status),
+        ServerExit::Stopped(signal) => Err(Error::Interrupted(signal)),
+    }
+}
+
 fn start_server(java: &Path, working_directory: &Path, jar_name: &str) -> Result<Child, Error> {
     Command::new(java)
         .args(["-jar", jar_name, "--nogui"])
@@ -248,16 +272,15 @@ fn start_server(java: &Path, working_directory: &Path, jar_name: &str) -> Result
         })
 }
 
-/// Waits without a time limit, but stops the server and reports the interruption once SIGINT or
-/// SIGTERM has arrived.
-fn wait_for_exit(server: &mut Child) -> Result<ExitStatus, Error> {
+/// Waits without a time limit, but stops the server once SIGINT or SIGTERM has arrived.
+fn wait_for_exit(server: &mut Child) -> Result<ServerExit, Error> {
     loop {
         if let Some(signal) = interruption::received() {
             stop_server(server, TERMINATION_GRACE_PERIOD)?;
-            return Err(Error::Interrupted(signal));
+            return Ok(ServerExit::Stopped(signal));
         }
         if let Some(status) = exit_status(server)? {
-            return Ok(status);
+            return Ok(ServerExit::Exited(status));
         }
         thread::sleep(POLL_INTERVAL);
     }

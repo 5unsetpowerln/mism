@@ -1,11 +1,11 @@
 use std::cmp::Reverse;
-use std::io::{self, Write};
 
 use super::project_name;
 use crate::command_line::VersionsArguments;
 use crate::http_client::{self, HttpClient};
 use crate::interruption::Signal;
 use crate::minecraft_version::{self, MinecraftVersion};
+use crate::output;
 use crate::papermc_api::response::VersionEntry;
 use crate::papermc_api::{self, HttpPaperMcApi, PaperMcApi};
 
@@ -17,8 +17,8 @@ pub enum Error {
     PaperMcApi(#[from] papermc_api::Error),
     #[error(transparent)]
     MinecraftVersion(#[from] minecraft_version::Error),
-    #[error("failed to write the version list to stdout")]
-    WriteStdout(#[source] io::Error),
+    #[error(transparent)]
+    Output(#[from] output::Error),
 }
 
 impl Error {
@@ -27,7 +27,7 @@ impl Error {
             Error::HttpClient(error) => error.hint(),
             Error::PaperMcApi(error) => error.hint(),
             Error::MinecraftVersion(error) => error.hint(),
-            Error::WriteStdout(_) => None,
+            Error::Output(error) => error.hint(),
         }
     }
 
@@ -35,7 +35,7 @@ impl Error {
         match self {
             Error::HttpClient(error) => error.interrupted_by(),
             Error::PaperMcApi(error) => error.interrupted_by(),
-            Error::MinecraftVersion(_) | Error::WriteStdout(_) => None,
+            Error::MinecraftVersion(_) | Error::Output(_) => None,
         }
     }
 }
@@ -43,10 +43,8 @@ impl Error {
 pub fn run(arguments: &VersionsArguments) -> Result<(), Error> {
     let api = HttpPaperMcApi::new(HttpClient::new()?);
     let entries = api.minecraft_versions(project_name(arguments.software))?;
-    let output = format_entries(sort_newest_first(entries)?);
-    io::stdout()
-        .write_all(output.as_bytes())
-        .map_err(Error::WriteStdout)
+    let list = format_entries(sort_newest_first(entries)?);
+    Ok(output::write_to_stdout(&list)?)
 }
 
 fn sort_newest_first(entries: Vec<VersionEntry>) -> Result<Vec<VersionEntry>, Error> {

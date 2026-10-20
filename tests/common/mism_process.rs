@@ -23,7 +23,11 @@ pub struct MismProcess {
 impl MismProcess {
     pub fn new() -> MismProcess {
         let mut command = Command::new(env!("CARGO_BIN_EXE_mism"));
-        command.env_clear();
+        command
+            .env_clear()
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
         MismProcess { command }
     }
 
@@ -46,21 +50,22 @@ impl MismProcess {
         self
     }
 
+    /// Connects mism's stderr to `stderr` instead of a pipe. `Output::stderr` is then empty.
+    pub fn stderr(mut self, stderr: impl Into<Stdio>) -> MismProcess {
+        self.command.stderr(stderr);
+        self
+    }
+
     /// Runs mism to its exit, failing the test if that takes longer than 30 seconds.
     pub fn run(self) -> Output {
         self.spawn().wait()
     }
 
     /// Starts mism. Its stdin is a pipe that stays open and receives nothing, so mism waiting for
-    /// input would never exit.
+    /// input would never exit. The command, with the parent's copy of a descriptor given to
+    /// `stderr`, is dropped here.
     pub fn spawn(mut self) -> RunningMism {
-        let child = self
-            .command
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
+        let child = self.command.spawn().unwrap();
         RunningMism { child }
     }
 }

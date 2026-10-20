@@ -5,6 +5,7 @@ mod http_client;
 mod interruption;
 mod jar_cache;
 mod minecraft_version;
+mod output;
 mod papermc;
 mod papermc_api;
 mod server_directory;
@@ -64,26 +65,32 @@ fn run(command_line: CommandLine) -> Result<(), Error> {
 fn report(error: &Error) -> ExitCode {
     match error.interrupted_by() {
         Some(signal) => {
-            eprintln!("mism: interrupted by {signal}");
+            write_report(&format!("interrupted by {signal}"));
             ExitCode::from(
                 u8::try_from(signal.exit_status()).expect("130 and 143 fit in an exit status"),
             )
         }
         None => {
-            print_error(error);
+            write_report(&error_report(error));
             ExitCode::FAILURE
         }
     }
 }
 
-fn print_error(error: &Error) {
-    eprintln!("mism: {error}");
+/// What failed, then each cause from the outermost one, then the remedy if there is one.
+fn error_report(error: &Error) -> String {
+    let mut lines = vec![error.to_string()];
     let mut source = error.source();
     while let Some(cause) = source {
-        eprintln!("  caused by: {cause}");
+        lines.push(format!("caused by: {cause}"));
         source = cause.source();
     }
-    if let Some(hint) = error.hint() {
-        eprintln!("hint: {hint}");
-    }
+    lines.extend(error.hint().map(|hint| format!("hint: {hint}")));
+    lines.join("\n")
+}
+
+fn write_report(report: &str) {
+    // A report that cannot be written to stderr has nowhere else to go; the exit status still
+    // tells that mism failed.
+    let _ = output::write_to_stderr(report);
 }

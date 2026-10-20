@@ -15,6 +15,7 @@ use common::fake_java::{self, Behavior};
 use common::fake_papermc;
 use common::mism_process::{Output, RunningMism};
 use common::new_server_environment::{JAR_BYTES, NewServerEnvironment};
+use common::server_output::{self, server_output};
 use common::slow_jar_server::SlowJarServer;
 
 const JAR_NAME: &str = "paper-26.3-206.jar";
@@ -94,9 +95,15 @@ fn saved_paper_version_list() -> String {
     fake_papermc::saved_version_list("paper").to_string()
 }
 
-/// The space-separated fields of what `mism new` printed to stdout.
+/// The space-separated fields of what `mism new` printed to stdout after `mism: `.
 fn printed_fields(output: &Output) -> Vec<&str> {
-    output.stdout.trim_end().split(' ').collect()
+    output
+        .stdout
+        .trim_end()
+        .strip_prefix("mism: ")
+        .unwrap_or_else(|| panic!("stdout lacks `mism: `: {}", output.stdout))
+        .split(' ')
+        .collect()
 }
 
 fn read_created_file(environment: &NewServerEnvironment, name: &str) -> String {
@@ -107,13 +114,28 @@ fn read_mism_toml(environment: &NewServerEnvironment) -> toml::Table {
     toml::from_str(&read_created_file(environment, "mism.toml")).unwrap()
 }
 
-/// The first line of mism's own error report; the server's output may come before it.
+/// mism's error report: what follows the end of the server's output in stderr if the server ran,
+/// or else the whole of stderr.
+fn error_report(output: &Output) -> &str {
+    let end_of_server_output = format!("{}\n", server_output::end_line(JAR_NAME));
+    match output.stderr.split_once(&end_of_server_output) {
+        Some((_, report)) => report,
+        None => &output.stderr,
+    }
+}
+
+/// The first line of mism's error report.
 fn error_line(output: &Output) -> &str {
-    output
-        .stderr
+    error_report(output)
         .lines()
-        .find(|line| line.starts_with("mism: "))
+        .next()
         .unwrap_or_else(|| panic!("stderr has no error: {}", output.stderr))
+}
+
+/// Whether the server's output, between the lines of out-2, has the line `expected`.
+fn server_printed(output: &Output, expected: &str) -> bool {
+    server_output(&output.stderr, JAR_NAME)
+        .is_some_and(|printed| printed.lines().any(|line| line == expected))
 }
 
 fn has_line(output: &Output, expected: &str) -> bool {
@@ -382,20 +404,23 @@ fn server_is_started_once() {
     assert_eq!(launches, [format!("-jar {JAR_NAME} --nogui")]);
 }
 
-/// new-5: the server's stdout reaches mism's stderr.
+/// new-5: the server's stdout reaches mism's stderr, between the lines of out-2.
 #[test]
 fn server_stdout_is_copied_to_stderr() {
     let (_environment, output) = create_paper_server(Behavior::Normal);
 
-    assert!(has_line(&output, &fake_java::server_stdout_line(JAR_NAME)));
+    assert!(server_printed(
+        &output,
+        &fake_java::server_stdout_line(JAR_NAME)
+    ));
 }
 
-/// new-5: the server's stderr reaches mism's stderr.
+/// new-5: the server's stderr reaches mism's stderr, between the lines of out-2.
 #[test]
 fn server_stderr_is_copied_to_stderr() {
     let (_environment, output) = create_paper_server(Behavior::Normal);
 
-    assert!(has_line(&output, fake_java::SERVER_STDERR_LINE));
+    assert!(server_printed(&output, fake_java::SERVER_STDERR_LINE));
 }
 
 /// new-6: `eula.txt` contains `eula=true`.
@@ -487,7 +512,10 @@ fn success_prints_the_software_its_versions_and_the_path() {
 
     assert_eq!(
         output.stdout,
-        format!("paper 26.3 206 {}\n", environment.server_path().display())
+        format!(
+            "mism: paper 26.3 206 {}\n",
+            environment.server_path().display()
+        )
     );
 }
 
@@ -508,7 +536,10 @@ fn folia_success_prints_folia() {
 
     assert_eq!(
         output.stdout,
-        format!("folia 26.3 3 {}\n", environment.server_path().display())
+        format!(
+            "mism: folia 26.3 3 {}\n",
+            environment.server_path().display()
+        )
     );
 }
 
@@ -744,7 +775,7 @@ fn unreachable_papermc_reports_the_cause() {
         output
             .stderr
             .lines()
-            .any(|line| line.starts_with("  caused by: "))
+            .any(|line| line.starts_with("mism: caused by: "))
     );
 }
 
@@ -755,7 +786,7 @@ fn version_that_is_not_distributed_has_a_hint() {
 
     assert!(has_line(
         &output,
-        "hint: run `mism versions paper` to see the distributed Minecraft versions"
+        "mism: hint: run `mism versions paper` to see the distributed Minecraft versions"
     ));
 }
 
@@ -764,7 +795,10 @@ fn version_that_is_not_distributed_has_a_hint() {
 fn unreachable_papermc_has_a_hint() {
     let (_environment, output, _base_url) = create_against_unreachable_papermc();
 
-    assert!(has_line(&output, "hint: check your network connection"));
+    assert!(has_line(
+        &output,
+        "mism: hint: check your network connection"
+    ));
 }
 
 /// err-9: the remedy for a failed initial launch (err-7)
@@ -774,7 +808,7 @@ fn failed_initial_launch_has_a_hint() {
 
     assert!(has_line(
         &output,
-        "hint: see the server log printed above for why the server stopped"
+        "mism: hint: see the server log printed above for why the server stopped"
     ));
 }
 
@@ -1167,7 +1201,7 @@ fn stalled_jar_download_reports_that_no_data_arrived() {
 
     assert!(has_line(
         &output,
-        "  caused by: io: no data arrived for 0.3 seconds"
+        "mism: caused by: io: no data arrived for 0.3 seconds"
     ));
 }
 
@@ -1208,7 +1242,7 @@ fn each_cause_of_the_error_has_a_caused_by_line() {
     let depth = output
         .stderr
         .lines()
-        .filter(|line| line.starts_with("  caused by: "))
+        .filter(|line| line.starts_with("mism: caused by: "))
         .count();
     assert_eq!(depth, 1);
 }

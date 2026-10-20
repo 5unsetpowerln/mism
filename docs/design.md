@@ -1,7 +1,7 @@
 ## 対象範囲
 
 mism は、Rust で実装した 1 つの実行ファイルであり、仕様書 (`docs/spec.md`)が定める振る舞いを Linux の上で実現する。
-この設計書は、仕様書のすべての番号付きの文 (`cli-1` から `cache-6` まで)を満たす方法を定める。
+この設計書は、仕様書のすべての番号付きの文 (`cli-1` から `cache-6` まで、`out-1` から `out-3` を含む)を満たす方法を定める。
 この設計書の書き方は、`docs/development-rules.md` の「文書の規則」に従う。
 この設計書では、`26.3` のような文字列を Minecraft のバージョンと呼び、PaperMC が 1 つの Minecraft のバージョンに対して番号 (e.g. `206`)を付けて配布する Paper (または Folia)を、その番号で識別して Paper (または Folia)のバージョンと呼ぶ。
 この設計書で「筆者」と書くときは、この設計書を書いた者を指す。
@@ -15,6 +15,7 @@ Cargo.toml
 src/
   main.rs                   サブコマンドの振り分け、エラーの出力、終了ステータスの決定
   command_line.rs           clap によるコマンドライン引数の定義
+  output.rs                 mism 自身の出力 (各行への `mism: ` の付与、外部のソフトウェアの出力の始まりと終わりの行、端末のときの色)
   subcommands/
     mod.rs
     new.rs                  mism new の手順の全体
@@ -42,18 +43,20 @@ tests/                      結合テスト。ファイルの分け方は「テ�
 
 ### モジュール同士の依存の向き
 
-- `main.rs` は、`command_line.rs`、`interruption.rs`、`subcommands/` に依存する。`main.rs` に依存するモジュールは無い。
+- `main.rs` は、`command_line.rs`、`interruption.rs`、`output.rs`、`subcommands/` に依存する。`main.rs` に依存するモジュールは無い。
+- `subcommands/new.rs`、`subcommands/versions.rs`、`server_directory/initial_launch.rs` は、`output.rs` に依存する。`output.rs` は、他のモジュールに依存しない。
 - `subcommands/mod.rs` は、`command_line.rs`、`papermc.rs`、`folia.rs` に依存する。`subcommands/new.rs` は、`http_client.rs`、`papermc_api/`、`jar_cache.rs`、`server_directory/` に依存する。`subcommands/versions.rs` は、`http_client.rs`、`papermc_api/`、`minecraft_version.rs` に依存する。`subcommands/` に依存するモジュールは `main.rs` だけである。
 - `papermc.rs` と `folia.rs` は、他のモジュールに依存しない。`papermc_api/` は、`http_client.rs` と `minecraft_version.rs` に依存する。
 - `jar_cache.rs` は、`http_client.rs` と `atomic_fs.rs` に依存する。`server_directory/creation.rs` は、`atomic_fs.rs` と `server_directory/initial_launch.rs` と `server_directory/mism_toml.rs` に依存する。
-- `http_client.rs`、`server_directory/initial_launch.rs`、`server_directory/creation.rs` は、中断のフラグを確認するので `interruption.rs` に依存する。エラーに中断の種類 (`interruption.rs` の `Signal`)を持たせるモジュール (`jar_cache.rs`、`papermc_api/`、`subcommands/`)も、`interruption.rs` に依存する。
+- `http_client.rs`、`server_directory/initial_launch.rs`、`server_directory/creation.rs` は、中断のフラグを確認するので `interruption.rs` に依存する。エラーに受信したシグナルの種類 (`interruption.rs` の `Signal`)を持たせるモジュール (`jar_cache.rs`、`papermc_api/`、`subcommands/`)も、`interruption.rs` に依存する。
 - `interruption.rs`、`atomic_fs.rs`、`minecraft_version.rs` は、他のモジュールに依存しない。
 
 ### 複数のモジュールに制約を課す決定
 
-- mism は、非同期ランタイムを持たず、mism 自身のコードではスレッドを作らず、すべての処理を 1 つのスレッドで順に行う。mism の通信は、JSON を返す GET を 2 回と jar ファイルのダウンロードを 1 回行うだけであり、同時に待つ入出力が無いからである。mism が ureq に通信の合計の時間の上限を設定すると、ureq は、名前解決のためのスレッドを内部で作る。筆者は、このことを 2026 年 10 月 20 日に確認した。
+- mism は、非同期ランタイムを持たず、mism 自身のコードではスレッドを作らず、すべての処理を 1 つのスレッドで順に行う。mism が行う通信は、JSON を返す GET 2 回と jar ファイルのダウンロード 1 回だけであり、mism が同時に待つ入出力は無いからである。mism が ureq に通信の合計の時間の上限を設定すると、ureq は、名前解決のためのスレッドを内部で作る。筆者は、このことを 2026 年 10 月 20 日に確認した。
 - 各モジュールは、そのモジュールのエラーの列挙型を thiserror で定義し、そのモジュールのファイルの中に置く。各バリアントは、メッセージに必要な値 (パス、URL、Minecraft のバージョンなど)と、元になったエラーを `#[source]` で持つ。`main.rs` は、各モジュールのエラーを `#[from]` で包む最上位の列挙型を持つ。
-- mism は、テストのために、mism が通常使う値を上書きする環境変数を 2 つ持つ。`MISM_PAPERMC_URL` は PaperMC の API のベース URL を、`MISM_DOWNLOAD_IDLE_TIMEOUT` はダウンロードを打ち切るまでの、データが届かない状態が続いてよい秒数を上書きする。この 2 つの環境変数が設定されていなければ、mism は本番の値を使う。
+- mism は、テストのために、mism が通常使う値を上書きする環境変数を 2 つ持つ。`MISM_PAPERMC_URL` は PaperMC の API のベース URL を、`MISM_DOWNLOAD_IDLE_TIMEOUT` はダウンロードを打ち切るまでの、データが届かない状態が続いてよい秒数を上書きする。この 2 つの環境変数が設定されていなければ、mism は通常の値を使う。
+- mism 自身の出力 (標準出力と標準エラー出力への行の書き込み)は、すべて `output.rs` を通して行う。`output.rs` は、書き込む文字列の各行の先頭に `mism: ` を付ける (out-1)。clap が出力する使い方とバージョン (cli-1 から cli-4)は、clap が直接書くので、`mism: ` を付ける処理の対象外である。
 - `interruption.rs` は、`SIGINT` と `SIGTERM` のハンドラと、受信したシグナルの種類を記録するプロセス全体で共有するフラグを持つ。`main.rs` は、起動時にそのハンドラを登録する。ハンドラは、フラグにシグナルの種類を記録するだけである。時間のかかる処理 (ダウンロード、Minecraft のサーバーの終了の待機)を行うモジュールは、このフラグを確認し、フラグが立っていれば処理をやめて中断のエラーを返す。
 
 ### 追加の機能の置き場所
@@ -96,13 +99,14 @@ mism は、形式に合わない引数、`--help`、`--version` に対して、c
 
 ```
 mism: failed to create directory /home/sunset/servers/survival
-  caused by: Permission denied (os error 13)
-hint: check that you have write permission to /home/sunset/servers
+mism: caused by: Permission denied (os error 13)
+mism: hint: check that you have write permission to /home/sunset/servers
 ```
 
-エラーの出力の先頭は、mism が何をしようとして失敗したかである。
-`caused by:` で始まる各出力は、`Error::source()` をたどって得た原因を、外側から順に 1 つずつ書いたものである。
-`hint:` で始まる出力は、利用者が取れる対処であり、エラーの列挙型のバリアントのうち対処が決まっているものだけがこの出力を持つ。
+エラーの報告の最初の行は、mism が何をしようとして失敗したかを書いた行である。
+`mism: caused by: ` で始まる各行は、`Error::source()` をたどって得た原因を、外側から順に 1 つずつ書いたものである。
+`mism: hint: ` で始まる行は、利用者が取れる対処を書いた行であり、エラーの列挙型のバリアントのうち対処が決まっているものだけがこの行を持つ。
+`main.rs` は、エラーの報告の各行を `output.rs` を通して書く (out-1)。
 対処が決まっているのは、次の場合である。
 
 - PaperMC が Minecraft のバージョンを配布していない場合 (err-3)、mism は、`mism versions` で配布しているバージョンを見るよう利用者に案内する。
@@ -116,13 +120,39 @@ mism は、中断による終了の終了ステータスを、`SIGINT` のとき
 ### 性質
 
 - d-cli-1. mism がエラーを報告したとき、エラーの報告の最初の行は `mism: ` で始まる。標準エラー出力の中で、サーバーの出力 (new-5)がエラーの報告の前にあることはあるが、サーバーの出力の行が `mism: ` で始まることはない。
-- d-cli-2. エラーに原因のエラーがあるとき、標準エラー出力には、`Error::source()` をたどって得られる原因のエラーの数と同じ数だけ、`  caused by: ` で始まる行がある。
+- d-cli-2. エラーに原因のエラーがあるとき、標準エラー出力には、`Error::source()` をたどって得られる原因のエラーの数と同じ数だけ、`mism: caused by: ` で始まる行がある。
 
 ### 判断
 
 - 変更を行う者がエラーのメッセージを英語で書くのは、サーバーのログと Java のメッセージが英語であり、利用者が 1 つの端末で読む文の言語を揃えるためである。
 - mism が終了ステータスを `SIGINT` のとき 130 に、`SIGTERM` のとき 143 にするのは、シェルの慣習 (128 にシグナルの番号を足す)に合わせるためである。
 - mism が `paper` と `folia` を clap の列挙型 (`ValueEnum`)として定義しないのは、clap 4.6 が、列挙型に無い値のエラーに使い方を含めないからである。筆者は、このことを 2026 年 10 月 20 日に確認した。
+
+## mism 自身の出力
+
+### 責務
+
+`output.rs` は、mism 自身が標準出力と標準エラー出力に書く文字列の各行の先頭に `mism: ` を付けること、外部のソフトウェアの出力の始まりと終わりを伝える文字列、端末のときの色を担う。
+このモジュールは、仕様書の out-1 から out-3 を満たし、new-10、ver-1、err-9 の出力の形を決める。
+
+### 方法
+
+mism は、mism 自身が書く文字列の各行の先頭に `mism: ` を付ける (out-1)。
+`subcommands/new.rs` の結果の行 (new-10)、`subcommands/versions.rs` の一覧の各行 (ver-1)、`main.rs` のエラーの報告と中断の報告 (err-9)は、すべてこのモジュールを通して書く。
+
+サーバーの出力の始まりを伝える文字列は `mism: output of <jar ファイルの名前> follows` であり、サーバーの出力の終わりを伝える文字列は `mism: output of <jar ファイルの名前> ended` である (out-2)。
+`server_directory/initial_launch.rs` は、サーバーのプロセスを起動する直前に始まりを伝える文字列と空行 1 行を、サーバーのプロセスが終了した直後 (中断でサーバーを止めた後を含む)に空行 1 行と終わりを伝える文字列を、このモジュールを通して標準エラー出力に書く。
+
+mism は、標準エラー出力が端末 (`isatty`)であるときだけ、サーバーの出力の始まりと終わりを伝える 2 つの文字列の先頭の `mism` を、ANSI の SGR の前景色の青 (パラメーター 34。`ESC[34m` から `ESC[0m` まで)で書く (out-3)。
+その青の実際の色合いは、端末のテーマが決める。
+mism は、それ以外の出力には色を付けず、標準エラー出力が端末でないときはエスケープシーケンスを一切書かない。
+
+### 判断
+
+- 筆者が青を RGB ではなく ANSI の SGR のパラメーター 34 で指定するのは、リポジトリの所有者が、色を固定せず端末のテーマに任せると決めたからである。
+- 筆者が色をサーバーの出力の始まりと終わりを伝える 2 つの文字列だけに付けるのは、仕様書の out-3 がその 2 つの文字列だけを定めているからである。
+- 筆者が始まりと終わりを伝える文字列を `initial_launch.rs` に書かせるのは、jar ファイルの名前と、サーバーのプロセスの起動と終了の時点を、そのモジュールだけが持つからである。
+- 筆者が `mism new` の結果の文字列 (new-10)と Minecraft のバージョンの一覧の各文字列 (ver-1)にも `mism: ` を付けるのは、リポジトリの所有者が、機械向けの出力は将来のオプション (`--json`)で分け、それ以外の出力をすべて人向けにすると決めたからである。
 
 ## HTTP クライアント
 
@@ -330,15 +360,15 @@ mism は、キャッシュのディレクトリにある jar ファイルを、�
 
 mism は、サーバーの準備を、<パス> の隣に作った作業用のディレクトリの中で行い、すべて終わってからそのディレクトリの名前を <パス> に変える。
 
-1. <パス> が相対パスなら、mism は、カレントディレクトリをつないで絶対パスにする (new-1)。
+1. <パス> が相対パスなら、mism は、<パス> の前にカレントディレクトリのパスをつないで、<パス> を絶対パスにする (new-1)。
 2. mism は、<パス> をシンボリックリンクをたどらずに調べ (`lstat`)、ファイル、ディレクトリ、シンボリックリンクのどれかがあれば、サーバーの作成を中止してエラーを報告する (err-1)。
 3. <パス> の親ディレクトリが無い場合と、親ディレクトリのパスにディレクトリ以外のものがある場合、mism は、サーバーの作成を中止してエラーを報告する (err-2)。
 4. mism は、Minecraft のバージョンと Paper (または Folia)のバージョンを選び、jar ファイルをキャッシュのディレクトリに用意する。
 5. mism は、親ディレクトリの中に `.mism-tmp-<16 桁のランダムな 16 進数>` という名前の作業用のディレクトリを作る。
-6. mism は、キャッシュのディレクトリの jar ファイルを作業用のディレクトリに複製し、複製した内容の SHA-256 を API の値と照合する。
+6. mism は、キャッシュのディレクトリの jar ファイルを作業用のディレクトリに複製し、複製した内容の SHA-256 を、ダウンロードの情報のエンドポイントが返した SHA-256 と照合する。
 7. mism は、作業用のディレクトリの中でサーバーを初回起動し、`eula.txt` を書き換え、`mism.toml` を作る (「初回起動」の節)。
 8. mism は、作業用のディレクトリの名前を <パス> に変える。<パス> に既に何かあれば名前の変更は失敗し、mism は、サーバーの作成を中止してエラーを報告する。
-9. mism は、`paper` か `folia`、Minecraft のバージョン、Paper (または Folia)のバージョン、<パス> をこの順に空白 1 文字で区切り、改行で終えた文字列を標準出力に出力する (new-10)。
+9. mism は、`paper` か `folia`、Minecraft のバージョン、Paper (または Folia)のバージョン、<パス> をこの順に空白 1 文字で区切った記述を、`output.rs` を通して (先頭に `mism: ` を付けて) 1 行として標準出力に書く (new-10、out-1)。
 
 手順 5 から 8 のどこかで mism がエラーを報告する場合、mism は、作業用のディレクトリを中身ごと削除する (err-8)。
 
@@ -379,8 +409,8 @@ mism は、この動作を使い、サーバーの終了ステータスには頼
 
 1. mism は、環境変数 `PATH` の要素のうち絶対パスであるものを順に見て、実行できる `java` を探す。空の要素と相対パスの要素は、mism は、見ない。`java` が無ければ、mism は、Java が見つからないことを伝えるエラーを報告する。
 2. mism は、`java -version` を実行して Java のメジャーバージョンを読み取り、それがバージョンの一覧のエンドポイント (`GET /v3/projects/{paper|folia}/versions`)が返す JSON の `version.java.version.minimum` より小さければ、必要な Java のバージョンと見つかった Java のバージョンを伝えるエラーを報告する。`java -version` が終わった後、mism は、中断のフラグを確認し、フラグが立っていれば中断として扱う。
-3. mism は、作業用のディレクトリをカレントディレクトリとして `java -jar <jar ファイルの名前> --nogui` を起動する。mism は、サーバーの標準入力を `/dev/null` につなぎ、サーバーの標準出力と標準エラー出力を両方とも mism の標準エラー出力につなぐ (new-5)。
-4. mism は、サーバーの終了を待つ。mism は、待つ時間に上限を設けない。
+3. mism は、始まりの行 (`mism: output of <jar ファイルの名前> follows`)と空行 1 行を標準エラー出力に書き (out-2)、作業用のディレクトリをカレントディレクトリとして `java -jar <jar ファイルの名前> --nogui` を起動する。mism は、サーバーの標準入力を `/dev/null` につなぎ、サーバーの標準出力と標準エラー出力を両方とも mism の標準エラー出力につなぐ (new-5)。
+4. mism は、サーバーの終了を待つ。mism は、待つ時間に上限を設けない。サーバーが終了したら、mism は、空行 1 行と終わりの行 (`mism: output of <jar ファイルの名前> ended`)を標準エラー出力に書く (out-2)。
 5. サーバーの終了後、作業用のディレクトリに `eula.txt` と `server.properties` の両方があれば、mism は初回起動を成功とみなす。どちらかが無ければ、mism は、サーバーの作成を中止してエラーを報告する (err-7)。
 6. mism は、`eula.txt` の中の `eula=false` という記述をすべて `eula=true` に書き換え、他の内容はそのまま残す (new-6)。`eula.txt` に `eula=false` という記述が 1 つも無ければ、mism は、サーバーの作成を中止してエラーを報告する。
 7. mism は、`mism.toml` を作業用のディレクトリの直下に書く (new-9)。
@@ -441,7 +471,7 @@ mism は、この 3 つのフィールドを持つ構造体を定義し、serde 
 
 1. mism は、バージョンの一覧のエンドポイント (`GET /v3/projects/{paper|folia}/versions`)を 1 回呼び、Minecraft のバージョンの一覧を得る。
 2. mism は、一覧を `version.id` のリリースが新しい順に並べる (ver-1)。
-3. mism は、各要素について、`version.id`、タブ 1 文字、`version.support.status` の順につないだ文字列を、改行で区切って標準出力に出力する (ver-2)。
+3. mism は、並べた一覧の各要素について、`version.id`、タブ 1 文字、`version.support.status` の順につないだ文字列を、`output.rs` を通して (先頭に `mism: ` を付けて) 1 行ずつ標準出力に書く (ver-1、ver-2、out-1)。
 
 呼び出しが失敗した場合、mism は、手順 3 に進まないので標準出力に何も出力せず、バージョンの列挙を中止してエラーを報告する (ver-3)。
 
@@ -458,7 +488,7 @@ mism は、この 3 つのフィールドを持つ構造体を定義し、serde 
 
 ### 方法
 
-変更を行う者は、`tests/` のファイルを、仕様書の節と同じ分け方 (`command_line.rs`、`new_server.rs`、`versions.rs`、`cache.rs`)で作る。
+変更を行う者は、`tests/` のファイルを、仕様書の節と同じ分け方 (`command_line.rs`、`output.rs`、`new_server.rs`、`versions.rs`、`cache.rs`)で作る。
 テストを書く者は、各テスト関数の `///` コメントに、そのテスト関数が確かめる仕様書の番号付きの文の番号か、設計書の「性質」の番号付きの文の番号を書く。
 
 偽の PaperMC は、テストの中で立てるローカルの HTTP サーバー (wiremock)である。
@@ -474,8 +504,9 @@ wiremock は、HTTP のレスポンスの本文を少しずつ送ることがで
 偽の `java` は、起動された回数と引数をファイルに記録し、テストがそれを読む。
 テストは、`PATH` の先頭にこのスクリプトを置いたディレクトリを足す。
 
-各テストは、一時ディレクトリを作り、`HOME`、`XDG_CACHE_HOME`、`PATH`、`MISM_PAPERMC_URL`、`MISM_DOWNLOAD_IDLE_TIMEOUT` を設定して mism の実行ファイルをプロセスとして起動し、標準出力、標準エラー出力、終了ステータス、ディレクトリの中身を確かめる。
+各テストは、一時ディレクトリを作り、`HOME`、`XDG_CACHE_HOME`、`PATH`、`MISM_PAPERMC_URL`、`MISM_DOWNLOAD_IDLE_TIMEOUT` を設定して mism の実行ファイルをプロセスとして起動し、標準出力、標準エラー出力、終了ステータス、mism が作ったサーバーのディレクトリと一時ディレクトリの中身を確かめる。
 テストは、ファイルが現れることやプロセスが終わることを待つとき、期限を決めて、その状態になるまで繰り返し確認する。
+標準エラー出力が端末であるときの色 (out-3)を確かめるテストは、nix の `openpty` で擬似端末を作り、その端末として振る舞う側 (slave)を mism の標準エラー出力につないで mism を起動し、制御する側 (master)から読んだ内容にエスケープシーケンスがあることを確かめる。
 
 変更を行う者は、通信もファイルも使わない処理 (Minecraft のバージョンの新旧の判定、バージョンの選択、`mism.toml` の読み書き、`eula.txt` の書き換え)を、そのモジュールのファイルの中の単体テストで確かめる。
 バージョンの選択の単体テストでは、テストが、決まった値を返す偽の実装を API のトレイトに与える。

@@ -16,6 +16,7 @@ toml = "1.1.8"
 ureq = { version = "~3.4", default-features = false, features = ["rustls"] }
 
 [dev-dependencies]
+nix = { version = "0.31.3", features = ["term"] }
 tempfile = "3.27.0"
 tokio = { version = "1.54.0", features = ["rt-multi-thread", "macros"] }
 wiremock = "0.6.5"
