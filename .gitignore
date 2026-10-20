@@ -4,3 +4,4 @@ tasks/
 .worktrees/
 pass.base64
 __pycache__/
+tmp/
