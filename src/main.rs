@@ -90,7 +90,7 @@ fn error_report(error: &Error) -> String {
 }
 
 fn write_report(report: &str) {
-    // A report that cannot be written to stderr has nowhere else to go; the exit status still
+    // A report that cannot be written to stdout has nowhere else to go; the exit status still
     // tells that mism failed.
-    let _ = output::write_to_stderr(report);
+    let _ = output::write_to_stdout(report);
 }

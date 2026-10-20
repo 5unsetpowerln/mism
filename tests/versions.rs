@@ -34,6 +34,12 @@ fn version_ids(stdout: &str) -> Vec<&str> {
         .collect()
 }
 
+/// The lines of `stdout` with a tab, which separates a Minecraft version from its support status
+/// (ver-2) and is in no line of an error report.
+fn version_lines(stdout: &str) -> Vec<&str> {
+    stdout.lines().filter(|line| line.contains('\t')).collect()
+}
+
 fn entry(id: &str) -> String {
     format!(
         r#"{{"version":{{"id":"{id}","support":{{"status":"SUPPORTED"}},"java":{{"version":{{"minimum":21}}}}}},"builds":[1]}}"#
@@ -88,10 +94,10 @@ fn each_line_is_the_id_a_tab_and_the_support_status() {
 
 /// ver-3
 #[test]
-fn unreachable_server_prints_nothing_to_stdout() {
+fn unreachable_server_prints_no_version() {
     let output = run_versions("paper", &fake_papermc::unreachable_base_url());
 
-    assert_eq!(output.stdout, "");
+    assert_eq!(version_lines(&output.stdout), Vec::<&str>::new());
 }
 
 /// ver-3
@@ -105,9 +111,14 @@ fn unreachable_server_exits_with_status_1() {
 /// ver-3
 #[test]
 fn unreachable_server_reports_an_error() {
-    let output = run_versions("paper", &fake_papermc::unreachable_base_url());
+    let base_url = fake_papermc::unreachable_base_url();
 
-    assert!(!output.stderr.is_empty());
+    let output = run_versions("paper", &base_url);
+
+    assert_eq!(
+        output.stdout.lines().next(),
+        Some(format!("mism: request to {base_url}/projects/paper/versions failed").as_str())
+    );
 }
 
 /// d-versions-1
@@ -144,7 +155,7 @@ fn list_in_the_wrong_order_is_printed_newest_first() {
 fn error_output_starts_with_mism_prefix() {
     let output = run_versions("paper", &fake_papermc::unreachable_base_url());
 
-    assert!(output.stderr.starts_with("mism: "));
+    assert!(output.stdout.starts_with("mism: "));
 }
 
 /// d-cli-2
@@ -154,7 +165,7 @@ fn each_level_of_the_error_chain_has_a_caused_by_line() {
     let output = run_versions("paper", &fake_papermc::unreachable_base_url());
 
     let depth = output
-        .stderr
+        .stdout
         .lines()
         .filter(|line| line.starts_with("mism: caused by: "))
         .count();
@@ -177,7 +188,7 @@ fn real_api_lists_paper_versions() {
     assert_eq!(
         (output.exit_code, output.stdout.lines().count() > 0),
         (0, true),
-        "stderr: {}",
-        output.stderr
+        "stdout: {}",
+        output.stdout
     );
 }

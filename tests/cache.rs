@@ -155,22 +155,22 @@ fn jar_whose_sha256_differs_exits_with_status_1() {
     assert_eq!(output.exit_code, 1);
 }
 
-/// cache-5: stderr reports the mismatch
+/// cache-5: stdout reports the mismatch
 #[test]
 fn jar_whose_sha256_differs_is_reported() {
     let (_environment, output) = serve_jar_with_wrong_published_sha256();
 
     assert!(
         output
-            .stderr
+            .stdout
             .lines()
             .any(|line| line.starts_with("mism: the SHA-256 of ")
                 && line.contains(&format!(
                     "but PaperMC publishes {}",
                     sha256_hex(b"some other jar")
                 ))),
-        "stderr: {}",
-        output.stderr
+        "stdout: {}",
+        output.stdout
     );
 }
 

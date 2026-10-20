@@ -50,9 +50,9 @@ impl MismProcess {
         self
     }
 
-    /// Connects mism's stderr to `stderr` instead of a pipe. `Output::stderr` is then empty.
-    pub fn stderr(mut self, stderr: impl Into<Stdio>) -> MismProcess {
-        self.command.stderr(stderr);
+    /// Connects mism's stdout to `stdout` instead of a pipe. `Output::stdout` is then empty.
+    pub fn stdout(mut self, stdout: impl Into<Stdio>) -> MismProcess {
+        self.command.stdout(stdout);
         self
     }
 
@@ -63,7 +63,7 @@ impl MismProcess {
 
     /// Starts mism. Its stdin is a pipe that stays open and receives nothing, so mism waiting for
     /// input would never exit. The command, with the parent's copy of a descriptor given to
-    /// `stderr`, is dropped here.
+    /// `stdout`, is dropped here.
     pub fn spawn(mut self) -> RunningMism {
         let child = self.command.spawn().unwrap();
         RunningMism { child }

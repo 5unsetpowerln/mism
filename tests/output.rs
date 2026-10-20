@@ -28,18 +28,18 @@ fn create_paper_server() -> Output {
     environment.mism_new(paper_arguments(&environment)).run()
 }
 
-/// Runs mism like `create_paper_server`, but with its stderr on a pseudo-terminal, and returns
+/// Runs mism like `create_paper_server`, but with its stdout on a pseudo-terminal, and returns
 /// what mism and the server wrote to that terminal.
-fn create_paper_server_with_stderr_on_a_terminal() -> String {
+fn create_paper_server_with_stdout_on_a_terminal() -> String {
     let environment = NewServerEnvironment::serving_paper_26_3(Behavior::Normal);
     let terminal = pseudo_terminal::open();
     let mism = environment
         .mism_new(paper_arguments(&environment))
-        .stderr(terminal.slave)
+        .stdout(terminal.slave)
         .spawn();
-    let stderr = pseudo_terminal::read_until_closed(terminal.master);
+    let stdout = pseudo_terminal::read_until_closed(terminal.master);
     mism.wait();
-    stderr
+    stdout
 }
 
 /// Runs `mism versions paper` against the PaperMC API at `papermc_url`.
@@ -58,36 +58,28 @@ fn lines_without_prefix(text: &str) -> Vec<&str> {
         .collect()
 }
 
-/// `stderr` without the empty lines and the server's output between the start line and the end
+/// `stdout` without the empty lines and the server's output between the start line and the end
 /// line (out-2).
-fn without_server_output(stderr: &str) -> String {
+fn without_server_output(stdout: &str) -> String {
     let start = format!("{}\n", start_line(JAR_NAME));
     let end = format!("{}\n", end_line(JAR_NAME));
-    let (before_start, after_start) = stderr
+    let (before_start, after_start) = stdout
         .split_once(&start)
-        .unwrap_or_else(|| panic!("stderr has no start line: {stderr}"));
+        .unwrap_or_else(|| panic!("stdout has no start line: {stdout}"));
     let (_, after_end) = after_start
         .split_once(&end)
-        .unwrap_or_else(|| panic!("stderr has no end line: {stderr}"));
+        .unwrap_or_else(|| panic!("stdout has no end line: {stdout}"));
     format!("{before_start}{start}{end}{after_end}")
 }
 
-/// out-1: stdout of a successful `mism new`
+/// out-1: stdout of a successful `mism new`, apart from the empty lines and the server's output
+/// of out-2
 #[test]
 fn every_line_on_stdout_of_mism_new_starts_with_the_prefix() {
     let output = create_paper_server();
 
-    assert_eq!(lines_without_prefix(&output.stdout), Vec::<&str>::new());
-}
-
-/// out-1: stderr of a successful `mism new`, apart from the empty lines and the server's output
-/// of out-2
-#[test]
-fn every_line_mism_writes_on_stderr_of_mism_new_starts_with_the_prefix() {
-    let output = create_paper_server();
-
     assert_eq!(
-        lines_without_prefix(&without_server_output(&output.stderr)),
+        lines_without_prefix(&without_server_output(&output.stdout)),
         Vec::<&str>::new()
     );
 }
@@ -108,7 +100,7 @@ fn every_line_on_stdout_of_mism_versions_starts_with_the_prefix() {
 fn every_line_of_an_error_report_starts_with_the_prefix() {
     let output = list_paper_versions(&fake_papermc::unreachable_base_url());
 
-    assert_eq!(lines_without_prefix(&output.stderr), Vec::<&str>::new());
+    assert_eq!(lines_without_prefix(&output.stdout), Vec::<&str>::new());
 }
 
 /// out-2: the start line, an empty line, the server's lines unchanged, an empty line, and the end
@@ -125,19 +117,19 @@ fn server_output_comes_between_the_start_line_and_the_end_line() {
         end_line(JAR_NAME)
     );
     assert!(
-        output.stderr.contains(&expected),
-        "stderr: {}",
-        output.stderr
+        output.stdout.contains(&expected),
+        "stdout: {}",
+        output.stdout
     );
 }
 
-/// out-3: stderr on a terminal. Only the leading `mism` of the start line and of the end line is
+/// out-3: stdout on a terminal. Only the leading `mism` of the start line and of the end line is
 /// colored, in blue.
 #[test]
 fn on_a_terminal_the_leading_mism_of_the_start_and_end_lines_is_blue() {
-    let stderr = create_paper_server_with_stderr_on_a_terminal();
+    let stdout = create_paper_server_with_stdout_on_a_terminal();
 
-    let lines_of_out_2: Vec<&str> = stderr
+    let lines_of_out_2: Vec<&str> = stdout
         .lines()
         .filter(|line| line.contains("output of "))
         .collect();
@@ -150,14 +142,41 @@ fn on_a_terminal_the_leading_mism_of_the_start_and_end_lines_is_blue() {
     );
 }
 
-/// out-3: stderr that is not a terminal
+/// out-3: stdout that is not a terminal
 #[test]
-fn on_a_pipe_stderr_has_no_escape_sequence() {
+fn on_a_pipe_stdout_has_no_escape_sequence() {
     let output = create_paper_server();
 
     assert!(
-        !output.stderr.contains('\x1b'),
-        "stderr: {:?}",
-        output.stderr
+        !output.stdout.contains('\x1b'),
+        "stdout: {:?}",
+        output.stdout
     );
+}
+
+/// out-4: a successful `mism new`, whose server writes to its stderr too
+#[test]
+fn mism_new_writes_nothing_to_stderr() {
+    let output = create_paper_server();
+
+    assert_eq!(output.stderr, "");
+}
+
+/// out-4: `mism versions`
+#[test]
+fn mism_versions_writes_nothing_to_stderr() {
+    let papermc = FakePaperMc::start();
+    papermc.mount_version_list_from_fixture("paper");
+
+    let output = list_paper_versions(&papermc.base_url());
+
+    assert_eq!(output.stderr, "");
+}
+
+/// out-4: an error report with a cause and a hint (err-5)
+#[test]
+fn error_report_writes_nothing_to_stderr() {
+    let output = list_paper_versions(&fake_papermc::unreachable_base_url());
+
+    assert_eq!(output.stderr, "");
 }

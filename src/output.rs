@@ -10,51 +10,42 @@ const RESET: &str = "\x1b[0m";
 pub enum Error {
     #[error("failed to write to stdout")]
     WriteStdout(#[source] io::Error),
-    #[error("failed to write to stderr")]
-    WriteStderr(#[source] io::Error),
 }
 
 impl Error {
     pub fn hint(&self) -> Option<String> {
         match self {
-            Error::WriteStdout(_) | Error::WriteStderr(_) => None,
+            Error::WriteStdout(_) => None,
         }
     }
 }
 
 /// Writes each line of `text` to stdout after `mism: ` (out-1).
 pub fn write_to_stdout(text: &str) -> Result<(), Error> {
-    io::stdout()
-        .write_all(prefixed_lines(text).as_bytes())
-        .map_err(Error::WriteStdout)
+    write_and_flush(&prefixed_lines(text))
 }
 
-/// Writes each line of `text` to stderr after `mism: ` (out-1).
-pub fn write_to_stderr(text: &str) -> Result<(), Error> {
-    write_stderr(&prefixed_lines(text))
-}
-
-/// Writes to stderr the line announcing that the output of `program` follows, and an empty line
+/// Writes to stdout the line announcing that the output of `program` follows, and an empty line
 /// (out-2).
 pub fn write_external_output_start(program: &str) -> Result<(), Error> {
-    write_stderr(&format!(
+    write_and_flush(&format!(
         "{}\n",
         marker_line(&format!("output of {program} follows"))
     ))
 }
 
-/// Writes to stderr an empty line, and the line telling that the output of `program` ended
+/// Writes to stdout an empty line, and the line telling that the output of `program` ended
 /// (out-2).
 pub fn write_external_output_end(program: &str) -> Result<(), Error> {
-    write_stderr(&format!(
+    write_and_flush(&format!(
         "\n{}",
         marker_line(&format!("output of {program} ended"))
     ))
 }
 
-/// `text` after `mism: ` as one line, with `mism` in blue when stderr is a terminal (out-3).
+/// `text` after `mism: ` as one line, with `mism` in blue when stdout is a terminal (out-3).
 fn marker_line(text: &str) -> String {
-    if io::stderr().is_terminal() {
+    if io::stdout().is_terminal() {
         format!("{BLUE}{PROGRAM_NAME}{RESET}: {text}\n")
     } else {
         format!("{PROGRAM_NAME}: {text}\n")
@@ -68,10 +59,14 @@ fn prefixed_lines(text: &str) -> String {
         .collect()
 }
 
-fn write_stderr(text: &str) -> Result<(), Error> {
-    io::stderr()
+/// Writes `text` to stdout and flushes it, so that it precedes whatever the server, which writes
+/// to the same stdout, prints afterwards.
+fn write_and_flush(text: &str) -> Result<(), Error> {
+    let mut stdout = io::stdout().lock();
+    stdout
         .write_all(text.as_bytes())
-        .map_err(Error::WriteStderr)
+        .and_then(|()| stdout.flush())
+        .map_err(Error::WriteStdout)
 }
 
 #[cfg(test)]

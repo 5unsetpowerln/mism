@@ -259,8 +259,8 @@ fn start_server(java: &Path, working_directory: &Path, jar_name: &str) -> Result
         .args(["-jar", jar_name, "--nogui"])
         .current_dir(working_directory)
         .stdin(Stdio::null())
-        .stdout(io::stderr())
-        .stderr(io::stderr())
+        .stdout(io::stdout())
+        .stderr(io::stdout())
         // In its own process group, the server does not receive the terminal's Ctrl-C, so mism
         // decides when and how it stops.
         .process_group(0)
