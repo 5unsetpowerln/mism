@@ -37,7 +37,8 @@ pub fn end_question_line() -> Result<(), Error> {
     write_and_flush("\n")
 }
 
-/// One value of a record that a `mism plugin` subcommand writes (plg-9).
+/// One value of a record that a `mism plugin` or `mism datapack` subcommand writes (plg-9,
+/// dp-12).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Field<'a> {
     /// A value, or none (`-`).

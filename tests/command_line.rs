@@ -99,6 +99,50 @@ fn plugin_subcommand_help_exits_with_zero() {
     assert_eq!(run(&["plugin", "search", "--help"]).exit_code, 0);
 }
 
+/// cli-3: `mism datapack --help` stdout
+#[test]
+fn datapack_help_prints_usage_to_stdout() {
+    assert!(
+        run(&["datapack", "--help"])
+            .stdout
+            .contains("Usage: mism datapack")
+    );
+}
+
+/// cli-3: `mism datapack --help` exit status
+#[test]
+fn datapack_help_exits_with_zero() {
+    assert_eq!(run(&["datapack", "--help"]).exit_code, 0);
+}
+
+/// cli-3: each `mism datapack` subcommand with `--help` prints its usage to stdout
+#[test]
+fn datapack_subcommand_help_prints_its_usage_to_stdout() {
+    let missing: Vec<_> = [
+        "search", "versions", "fetch", "inspect", "place", "install", "list", "remove",
+    ]
+    .into_iter()
+    .filter(|subcommand| {
+        !run(&["datapack", subcommand, "--help"])
+            .stdout
+            .contains(&format!("Usage: mism datapack {subcommand}"))
+    })
+    .collect();
+    assert!(missing.is_empty(), "{missing:?}");
+}
+
+/// cli-3: each `mism datapack` subcommand with `--help` exits with zero
+#[test]
+fn datapack_subcommand_help_exits_with_zero() {
+    let failed: Vec<_> = [
+        "search", "versions", "fetch", "inspect", "place", "install", "list", "remove",
+    ]
+    .into_iter()
+    .filter(|subcommand| run(&["datapack", subcommand, "--help"]).exit_code != 0)
+    .collect();
+    assert!(failed.is_empty(), "{failed:?}");
+}
+
 /// cli-4: `mism plugin` without a subcommand exits with two
 #[test]
 fn plugin_without_subcommand_exits_with_two() {

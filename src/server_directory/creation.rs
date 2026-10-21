@@ -340,6 +340,7 @@ mod tests {
             minecraft_version: "26.3".to_owned(),
             software_version: 206,
             plugins: Vec::new(),
+            datapacks: Vec::new(),
         }
     }
 

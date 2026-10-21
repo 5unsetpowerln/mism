@@ -11,9 +11,9 @@ pub struct SearchResults {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct SearchHit {
     pub project_id: String,
-    /// The identifier (plg-3).
+    /// The identifier (plg-3, dp-4).
     pub slug: String,
-    /// The plugin name (plg-5).
+    /// The plugin or datapack name (plg-5, dp-8).
     pub title: String,
 }
 
@@ -32,6 +32,7 @@ pub struct Version {
     pub version_number: String,
     /// `release`, `beta`, or `alpha`.
     pub version_type: String,
+    /// The software the version supports: for a plugin, the server software.
     pub loaders: Vec<String>,
     pub game_versions: Vec<String>,
     /// Read as an RFC 3339 time; any other text makes the response invalid JSON for mism.
@@ -60,6 +61,10 @@ pub struct VersionFile {
     pub filename: String,
     pub url: String,
     pub hashes: FileHashes,
+    /// What kind of file it is (e.g. `optional-resource-pack`); `None` when Modrinth tells none,
+    /// with `null` or without the key (dp-5).
+    #[serde(default)]
+    pub file_type: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -85,7 +90,7 @@ pub struct VersionProject {
 mod tests {
     use super::*;
 
-    const SAVED_VERSION_LISTS: [&str; 7] = [
+    const SAVED_VERSION_LISTS: [&str; 11] = [
         include_str!("../../tests/fixtures/modrinth-versions-luckperms.json"),
         include_str!("../../tests/fixtures/modrinth-versions-fastasyncworldedit.json"),
         include_str!("../../tests/fixtures/modrinth-versions-multiverse-portals.json"),
@@ -93,7 +98,13 @@ mod tests {
         include_str!("../../tests/fixtures/modrinth-versions-multiverse-signportals.json"),
         include_str!("../../tests/fixtures/modrinth-versions-locationlast.json"),
         include_str!("../../tests/fixtures/modrinth-versions-playerportals.json"),
+        include_str!("../../tests/fixtures/modrinth-versions-true-ending.json"),
+        include_str!("../../tests/fixtures/modrinth-versions-stellarity_x_true_ending_patch.json"),
+        include_str!("../../tests/fixtures/modrinth-versions-vanilla-true-ending.json"),
+        include_str!("../../tests/fixtures/modrinth-versions-navas-zamega.json"),
     ];
+    const NAVAS_ZAMEGA_VERSIONS: &str =
+        include_str!("../../tests/fixtures/modrinth-versions-navas-zamega.json");
     const SEARCH: &str =
         include_str!("../../tests/fixtures/modrinth-search-multiverse-portals.json");
     const PROJECT: &str = include_str!("../../tests/fixtures/modrinth-project-luckperms.json");
@@ -116,6 +127,43 @@ mod tests {
             .filter_map(|json| serde_json::from_str::<Vec<Version>>(json).err())
             .collect();
         assert!(failures.is_empty(), "{failures:?}");
+    }
+
+    /// 「Modrinth の API」 方法: `file_type` is read, and `null` is no kind of file.
+    #[test]
+    fn file_type_is_read() {
+        let versions: Vec<Version> = serde_json::from_str(NAVAS_ZAMEGA_VERSIONS).unwrap();
+        let version = versions
+            .iter()
+            .find(|version| version.version_number == "1.2.1")
+            .unwrap();
+
+        let file_types: Vec<_> = version
+            .files
+            .iter()
+            .map(|file| file.file_type.as_deref())
+            .collect();
+
+        assert_eq!(
+            file_types,
+            [
+                None,
+                Some("optional-resource-pack"),
+                Some("optional-resource-pack"),
+                Some("optional-resource-pack")
+            ]
+        );
+    }
+
+    /// 「Modrinth の API」 方法: a file without `file_type` is no kind of file.
+    #[test]
+    fn file_without_file_type_is_no_kind_of_file() {
+        let file: VersionFile = serde_json::from_str(
+            r#"{"filename":"a.zip","url":"https://cdn.example/a.zip","hashes":{"sha512":"0"}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(file.file_type, None);
     }
 
     /// 「Modrinth の API」 方法: the search hits are read in Modrinth's order.

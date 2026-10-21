@@ -63,6 +63,7 @@ pub fn run(arguments: &NewArguments) -> Result<(), Error> {
         minecraft_version: selected.minecraft_version.clone(),
         software_version: selected.software_version,
         plugins: Vec::new(),
+        datapacks: Vec::new(),
     };
     let server_directory = creation::create_server_directory(
         target,

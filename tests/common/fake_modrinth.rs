@@ -17,6 +17,13 @@ const REQUEST_DEADLINE: Duration = Duration::from_secs(30);
 pub const LUCKPERMS_SOURCE: &str = "modrinth:luckperms:v5.5.71-bukkit";
 /// The file name of LuckPerms v5.5.71-bukkit.
 pub const LUCKPERMS_FILE_NAME: &str = "LuckPerms-Bukkit-5.5.71.jar";
+/// The source of the datapack of True Ending 1.1.4d, the only Modrinth version for datapacks with
+/// that number, which has one file (dp-6).
+pub const TRUE_ENDING_SOURCE: &str = "modrinth:true-ending:1.1.4d";
+/// The file name of the datapack of True Ending 1.1.4d.
+pub const TRUE_ENDING_FILE_NAME: &str = "tru.e-ending-1.1.4d.zip";
+/// The name of True Ending on Modrinth (dp-8).
+pub const TRUE_ENDING_NAME: &str = "True Ending - Ender Dragon Overhaul";
 
 /// A local stand-in for the Modrinth API under `/v2`, serving the responses saved from the real
 /// Modrinth in `tests/fixtures/`, served from a runtime this struct owns.
@@ -80,17 +87,22 @@ impl FakeModrinth {
         *self.delay.lock().unwrap() = delay;
     }
 
-    /// Serves the saved `modrinth-search-<fixture_name>.json` for the search term `query`.
-    pub fn mount_search(&self, query: &str, fixture_name: &str) {
-        self.mount_search_json(query, &saved_search(fixture_name));
+    /// Serves the saved `modrinth-search-<fixture_name>.json` for the search term `query` among
+    /// the projects of `project_type` (`plugin` or `datapack`).
+    pub fn mount_search(&self, query: &str, project_type: &str, fixture_name: &str) {
+        self.mount_search_json(query, project_type, &saved_search(fixture_name));
     }
 
     /// Serves `results`, a search response that the test may have changed, for the search term
-    /// `query`.
-    pub fn mount_search_json(&self, query: &str, results: &Value) {
+    /// `query` among the projects of `project_type`.
+    pub fn mount_search_json(&self, query: &str, project_type: &str, results: &Value) {
         let mock = Mock::given(method("GET"))
             .and(path("/v2/search"))
-            .and(query_param("query", query));
+            .and(query_param("query", query))
+            .and(query_param(
+                "facets",
+                format!(r#"[["project_type:{project_type}"]]"#),
+            ));
         self.mount(mock, self.json(&results.to_string()));
     }
 
@@ -129,6 +141,16 @@ impl FakeModrinth {
         self.mount_version_list("luckperms", &[ServedFile::new(LUCKPERMS_FILE_NAME, bytes)]);
     }
 
+    /// Serves True Ending's saved project and version list, with `bytes` as the file of the
+    /// datapack 1.1.4d.
+    pub fn serve_true_ending(&self, bytes: &[u8]) {
+        self.mount_project("true-ending");
+        self.mount_version_list(
+            "true-ending",
+            &[ServedFile::new(TRUE_ENDING_FILE_NAME, bytes)],
+        );
+    }
+
     /// Serves `versions`, a version list that the test changed, at the endpoint of `slug`.
     pub fn mount_version_list_json(&self, slug: &str, versions: &Value) {
         let mock = Mock::given(method("GET"))
@@ -137,12 +159,13 @@ impl FakeModrinth {
         self.mount(mock, self.json(&versions.to_string()));
     }
 
-    /// Serves the saved `modrinth-projects-multiverse-core.json` for `ids=["3wmN97b8"]`.
-    pub fn mount_projects_multiverse_core(&self) {
-        let body = fixture("modrinth-projects-multiverse-core.json");
+    /// Serves the saved `modrinth-projects-<fixture_name>.json` for the project ids `ids`, which
+    /// mism requests as a JSON array in this order.
+    pub fn mount_projects(&self, fixture_name: &str, ids: &[&str]) {
+        let body = fixture(&format!("modrinth-projects-{fixture_name}.json"));
         let mock = Mock::given(method("GET"))
             .and(path("/v2/projects"))
-            .and(query_param("ids", r#"["3wmN97b8"]"#));
+            .and(query_param("ids", serde_json::to_string(ids).unwrap()));
         self.mount(mock, self.json(&body));
     }
 
@@ -262,24 +285,33 @@ pub fn saved_project(slug: &str) -> Value {
     serde_json::from_str(&fixture(&format!("modrinth-project-{slug}.json"))).unwrap()
 }
 
-/// The project id of `slug`, from its saved project response or the saved search response.
+/// The project id of `slug`, from its saved project response or a saved search response.
 pub fn project_id(slug: &str) -> String {
     let project_fixture = format!("modrinth-project-{slug}.json");
     if fixture_path(&project_fixture).exists() {
         let project: Value = serde_json::from_str(&fixture(&project_fixture)).unwrap();
         return project["id"].as_str().unwrap().to_owned();
     }
-    let search: Value =
-        serde_json::from_str(&fixture("modrinth-search-multiverse-portals.json")).unwrap();
-    search["hits"]
-        .as_array()
-        .unwrap()
-        .iter()
+    saved_search_hits()
+        .into_iter()
         .find(|hit| hit["slug"] == slug)
         .unwrap_or_else(|| panic!("no saved response has the project id of {slug}"))["project_id"]
         .as_str()
         .unwrap()
         .to_owned()
+}
+
+/// The hits of every saved `modrinth-search-*.json`.
+fn saved_search_hits() -> Vec<Value> {
+    let mut hits = Vec::new();
+    for entry in fs::read_dir(fixture_path("")).unwrap() {
+        let name = entry.unwrap().file_name().into_string().unwrap();
+        if name.starts_with("modrinth-search-") {
+            let search: Value = serde_json::from_str(&fixture(&name)).unwrap();
+            hits.extend(search["hits"].as_array().unwrap().iter().cloned());
+        }
+    }
+    hits
 }
 
 /// Points every file named `filename` in `versions` at `url` with `sha512`.

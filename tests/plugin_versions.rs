@@ -129,8 +129,8 @@ fn versions_are_written_newest_first() {
     );
 }
 
-/// vers-1 (「mism plugin versions の手順」 方法 6): versions published at the same time keep the
-/// order Modrinth returned them in.
+/// vers-1 (「mism plugin versions と mism datapack versions の手順」 方法 6): versions published at
+/// the same time keep the order Modrinth returned them in.
 #[test]
 fn equally_new_versions_keep_modrinths_order() {
     let output = list_luckperms(|versions| {
@@ -166,7 +166,9 @@ fn record_of_a_version() {
 #[test]
 fn required_dependencies_are_their_identifiers() {
     let output = list_multiverse_portals(|environment| {
-        environment.modrinth.mount_projects_multiverse_core();
+        environment
+            .modrinth
+            .mount_projects("multiverse-core", &["3wmN97b8"]);
     });
 
     assert_eq!(
@@ -179,7 +181,9 @@ fn required_dependencies_are_their_identifiers() {
 #[test]
 fn release_type_is_written() {
     let output = list_multiverse_portals(|environment| {
-        environment.modrinth.mount_projects_multiverse_core();
+        environment
+            .modrinth
+            .mount_projects("multiverse-core", &["3wmN97b8"]);
     });
 
     assert_eq!(
@@ -331,7 +335,8 @@ fn invalid_argument_exits_with_status_1() {
     assert_eq!(output.exit_code, 1);
 }
 
-/// vers-4 (「mism plugin versions の手順」 方法 1): an invalid argument sends no request.
+/// vers-4 (「mism plugin versions と mism datapack versions の手順」 方法 1): an invalid argument
+/// sends no request.
 #[test]
 fn invalid_argument_sends_no_request() {
     let (environment, _output) = list_invalid("modrinth:luckperms:v5.5.71-bukkit");
@@ -395,8 +400,8 @@ fn failed_request_writes_no_names_of_the_values() {
     ));
 }
 
-/// vers-5 (「mism plugin versions の手順」 方法 7): a request that fails after the version list
-/// was received writes no version.
+/// vers-5 (「mism plugin versions と mism datapack versions の手順」 方法 7): a request that fails
+/// after the version list was received writes no version.
 #[test]
 fn failed_request_for_the_dependencies_writes_no_version() {
     let output = list_multiverse_portals(|environment| {

@@ -17,8 +17,10 @@ pub enum Error {
     #[error("{} is not a valid mism.toml", path.display())]
     Parse {
         path: PathBuf,
+        // Boxed: the parser's error is large, and every result that carries this error carries
+        // its size.
         #[source]
-        source: toml::de::Error,
+        source: Box<toml::de::Error>,
     },
     #[error("failed to write {}", path.display())]
     Write {
@@ -40,7 +42,8 @@ impl Error {
 }
 
 /// The contents of a server directory's `mism.toml`: which server software it runs, which
-/// version of it, and the plugins mism placed in its `plugins/`.
+/// version of it, the plugins mism placed in its `plugins/`, and the datapacks mism placed in its
+/// world's `datapacks/`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MismToml {
@@ -49,13 +52,16 @@ pub struct MismToml {
     pub software_version: u64,
     /// In the order mism placed them (plg-4). A file without `plugins` has no records.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub plugins: Vec<PluginRecord>,
+    pub plugins: Vec<Record>,
+    /// In the order mism placed them (dp-7). A file without `datapacks` has no records.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub datapacks: Vec<Record>,
 }
 
-/// The record of one plugin mism placed in `plugins/` (plg-4).
+/// The record of one plugin or datapack that mism placed (plg-4, dp-7).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct PluginRecord {
+pub struct Record {
     pub name: String,
     pub source: String,
     pub file_name: String,
@@ -70,7 +76,7 @@ impl MismToml {
         })?;
         toml::from_str(&text).map_err(|source| Error::Parse {
             path: path.to_path_buf(),
-            source,
+            source: Box::new(source),
         })
     }
 
@@ -102,7 +108,7 @@ mod tests {
         tempfile::tempdir_in(parent).unwrap()
     }
 
-    use super::PluginRecord;
+    use super::Record;
 
     fn paper_26_3_206() -> MismToml {
         MismToml {
@@ -110,11 +116,12 @@ mod tests {
             minecraft_version: "26.3".to_owned(),
             software_version: 206,
             plugins: Vec::new(),
+            datapacks: Vec::new(),
         }
     }
 
-    fn luckperms_record() -> PluginRecord {
-        PluginRecord {
+    fn luckperms_record() -> Record {
+        Record {
             name: "LuckPerms".to_owned(),
             source: "modrinth:luckperms:v5.5.71-bukkit".to_owned(),
             file_name: "LuckPerms-Bukkit-5.5.71.jar".to_owned(),
@@ -218,6 +225,44 @@ mod tests {
         assert_eq!(read.plugins, []);
     }
 
+    /// d-toml-3
+    #[test]
+    fn file_without_datapacks_has_no_datapack_records() {
+        let read = read_text(&format!(
+            "software = \"paper\"\nminecraft_version = \"26.3\"\nsoftware_version = 206\n\n\
+             [[plugins]]\nname = \"LuckPerms\"\nsource = \"modrinth:luckperms:v5.5.71-bukkit\"\n\
+             file_name = \"LuckPerms-Bukkit-5.5.71.jar\"\nsha256 = \"{}\"\n",
+            "0".repeat(64)
+        ));
+
+        assert_eq!(read.datapacks, []);
+    }
+
+    /// 「mism.toml」 方法 (dp-7): datapack records are written as `[[datapacks]]` after the plugin
+    /// records and read back in order.
+    #[test]
+    fn datapack_records_are_written_after_the_plugin_records() {
+        let directory = temporary_directory();
+        let path = directory.path().join("mism.toml");
+        let true_ending = Record {
+            name: "True Ending - Ender Dragon Overhaul".to_owned(),
+            source: "modrinth:true-ending:1.1.4d".to_owned(),
+            file_name: "tru.e-ending-1.1.4d.zip".to_owned(),
+            sha256: "1".repeat(64),
+        };
+        MismToml {
+            plugins: vec![luckperms_record()],
+            datapacks: vec![true_ending],
+            ..paper_26_3_206()
+        }
+        .write(&path)
+        .unwrap();
+
+        let text = fs::read_to_string(&path).unwrap();
+        let tables: Vec<_> = text.lines().filter(|line| line.starts_with("[[")).collect();
+        assert_eq!(tables, ["[[plugins]]", "[[datapacks]]"]);
+    }
+
     /// d-toml-2
     #[test]
     fn file_without_records_has_only_the_three_keys() {
@@ -236,7 +281,7 @@ mod tests {
     fn records_are_read_back_in_order() {
         let directory = temporary_directory();
         let path = directory.path().join("mism.toml");
-        let second = PluginRecord {
+        let second = Record {
             name: "Vault".to_owned(),
             ..luckperms_record()
         };
@@ -277,7 +322,8 @@ mod tests {
         );
     }
 
-    /// 「mism plugin の対象のサーバーと共通の手順」 方法 1: a missing file is told apart.
+    /// 「mism plugin と mism datapack の対象のサーバーと共通の手順」 方法 1: a missing file is told
+    /// apart.
     #[test]
     fn reading_a_missing_file_is_a_not_found_error() {
         let directory = temporary_directory();

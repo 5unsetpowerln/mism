@@ -1,67 +1,98 @@
-use super::{CommonStepError, TerminalAsker};
-use crate::command_line::FetchArguments;
-use crate::compatibility::TargetServer;
+use super::{CacheError, JAR_SUFFIX, SourceError};
+use crate::command_line::PluginFetchArguments;
+use crate::fetch_source::{FetchSource, LocalFile, UrlSource};
+use crate::fetched_file_cache::{CachedFile, Fetched, Origin, Stored};
 use crate::http_client::{self, HttpClient};
-use crate::interruption::Signal;
-use crate::modrinth_api::selection::{self, Request};
-use crate::modrinth_api::{self, HttpModrinthApi, ModrinthApi};
+use crate::interruption::{self, Interrupted, Signal};
+use crate::modrinth_api::response::{Version, VersionFile};
+use crate::modrinth_api::selection::{self, Attribute, CandidateRules, Lazy, Request};
+use crate::modrinth_source::ModrinthSource;
 use crate::output::{self, Field};
-use crate::plugin_cache::{self, CachedJar, Fetched, ModrinthRecord, Origin, Stored};
-use crate::plugin_source::{self, LocalJar, ModrinthSource, PluginSource, UrlSource};
+use crate::plugin_compatibility::{self, Agreement, TargetServer};
 use crate::prompt;
+use crate::subcommands::modrinth_fetch;
+use crate::subcommands::terminal_asker::TerminalAsker;
 
-const JAR_SUFFIX: &str = ".jar";
+/// Every file of every version of a plugin is a candidate, narrowed by all five attributes
+/// (plg-10).
+const CANDIDATE_RULES: CandidateRules = CandidateRules {
+    is_candidate,
+    later_attributes: &[
+        Attribute::Software,
+        Attribute::MinecraftVersion,
+        Attribute::ReleaseType,
+        Attribute::FileName,
+    ],
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
-    Source(#[from] plugin_source::Error),
+    Source(#[from] SourceError),
     #[error(transparent)]
     Http(#[from] http_client::Error),
+    #[error("Modrinth has no file of the plugin {identifier}")]
+    NoFiles { identifier: String },
     #[error(transparent)]
-    Modrinth(#[from] modrinth_api::Error),
-    #[error(transparent)]
-    Selection(#[from] selection::Error),
+    ModrinthFile(modrinth_fetch::Error),
     #[error(transparent)]
     Prompt(#[from] prompt::Error),
     #[error(transparent)]
-    PluginCache(#[from] plugin_cache::Error),
+    Cache(#[from] CacheError),
     #[error(transparent)]
-    CommonStep(#[from] CommonStepError),
+    Interrupted(#[from] Interrupted),
     #[error(transparent)]
     Output(#[from] output::Error),
+}
+
+impl From<modrinth_fetch::Error> for Error {
+    fn from(error: modrinth_fetch::Error) -> Error {
+        match error {
+            modrinth_fetch::Error::Selection(selection::Error::NoFiles { identifier }) => {
+                Error::NoFiles { identifier }
+            }
+            error => Error::ModrinthFile(error),
+        }
+    }
 }
 
 impl Error {
     pub fn hint(&self) -> Option<String> {
         match self {
+            Error::ModrinthFile(modrinth_fetch::Error::Modrinth(error)) => {
+                super::modrinth_hint(error)
+            }
+            Error::ModrinthFile(modrinth_fetch::Error::Selection(
+                selection::Error::NoMatchingVersion { identifier, .. },
+            )) => Some(format!(
+                "run `mism plugin versions modrinth:{identifier}` to see how each version matches \
+                 the server, and give a source with a version number"
+            )),
             Error::Source(error) => error.hint(),
             Error::Http(error) => error.hint(),
-            Error::Modrinth(error) => error.hint(),
-            Error::Selection(error) => error.hint(),
+            Error::ModrinthFile(error) => error.hint(),
             Error::Prompt(error) => error.hint(),
-            Error::PluginCache(error) => error.hint(),
-            Error::CommonStep(error) => error.hint(),
+            Error::Cache(error) => error.hint(),
             Error::Output(error) => error.hint(),
+            Error::NoFiles { .. } | Error::Interrupted(_) => None,
         }
     }
 
     pub fn interrupted_by(&self) -> Option<Signal> {
         match self {
             Error::Http(error) => error.interrupted_by(),
-            Error::Modrinth(error) => error.interrupted_by(),
-            Error::Selection(error) => error.interrupted_by(),
+            Error::ModrinthFile(error) => error.interrupted_by(),
             Error::Prompt(error) => error.interrupted_by(),
-            Error::PluginCache(error) => error.interrupted_by(),
-            Error::CommonStep(error) => error.interrupted_by(),
-            Error::Source(_) | Error::Output(_) => None,
+            Error::Cache(error) => error.interrupted_by(),
+            Error::Interrupted(Interrupted(signal)) => Some(*signal),
+            Error::Source(_) | Error::NoFiles { .. } | Error::Output(_) => None,
         }
     }
 }
 
 /// `mism plugin fetch`: the fetch procedure, then the record of what it fetched (fetch-5).
-pub fn run(arguments: &FetchArguments) -> Result<(), Error> {
-    let source = plugin_source::parse(&arguments.source)?;
+pub fn run(arguments: &PluginFetchArguments) -> Result<(), Error> {
+    let source = super::parse_source(&arguments.source)?;
     let cached_jar = fetch_jar(&arguments.source, &source, arguments.yes, None)?;
     write_fetched(&cached_jar)
 }
@@ -72,81 +103,82 @@ pub fn run(arguments: &FetchArguments) -> Result<(), Error> {
 /// source without values.
 pub fn fetch_jar(
     text: &str,
-    source: &PluginSource,
+    source: &FetchSource,
     yes: bool,
     lazy: Option<TargetServer>,
-) -> Result<CachedJar, Error> {
+) -> Result<CachedFile, Error> {
     let client = HttpClient::new()?;
-    match source {
-        PluginSource::Modrinth(modrinth) => fetch_from_modrinth(&client, modrinth, lazy, yes),
-        PluginSource::Url(url) => fetch_from_url(&client, url, yes),
-        PluginSource::File(local_jar) => fetch_local_jar(&client, text, local_jar),
-    }
+    let fetched = match source {
+        FetchSource::Modrinth(modrinth) => fetched_from_modrinth(&client, modrinth, lazy, yes)?,
+        FetchSource::Url(url) => fetched_from_url(url, yes)?,
+        FetchSource::File(local_jar) => fetched_local_jar(text, local_jar),
+    };
+    store(&client, &fetched)
 }
 
 /// Step 2 (plg-3, plg-5, plg-10 to plg-12, inst-2).
-fn fetch_from_modrinth(
+fn fetched_from_modrinth(
     client: &HttpClient,
     modrinth: &ModrinthSource,
     lazy: Option<TargetServer>,
     yes: bool,
-) -> Result<CachedJar, Error> {
-    let api = HttpModrinthApi::new(client.clone())?;
-    let project = modrinth_api::identified_project(&api, &modrinth.identifier)?;
-    let versions = api.project_versions(&project.id)?;
-    let request = match lazy {
-        Some(target) => Request::Lazy(target),
-        None => Request::Values(&modrinth.values),
+) -> Result<Fetched, Error> {
+    let Some(target) = lazy else {
+        return file_to_fetch(client, modrinth, Request::Values(&modrinth.values), yes);
     };
-    let selected = selection::select(
-        &modrinth.identifier,
-        &versions,
+    let matches = |version: &Version| matches_server(version, &target);
+    let lazy = Lazy {
+        matches: &matches,
+        software: target.software,
+        minecraft_version: target.minecraft_version,
+    };
+    file_to_fetch(client, modrinth, Request::Lazy(lazy), yes)
+}
+
+/// The file of a plugin that `request` chooses, asking unless `yes` (plg-10 to plg-12, inst-2).
+fn file_to_fetch(
+    client: &HttpClient,
+    modrinth: &ModrinthSource,
+    request: Request,
+    yes: bool,
+) -> Result<Fetched, Error> {
+    Ok(modrinth_fetch::file_to_fetch(
+        client,
+        modrinth,
+        &CANDIDATE_RULES,
         request,
         &mut TerminalAsker::new(yes),
-    )?;
-    let required_dependencies =
-        modrinth_api::required_dependency_identifiers(&api, &[selected.version])?
-            .pop()
-            .expect("there is one set of identifiers for the one version");
-    store(
-        client,
-        &Fetched {
-            origin: Origin::Modrinth {
-                url: &selected.file.url,
-                sha512: &selected.file.hashes.sha512,
-            },
-            plugin_name: &project.title,
-            file_name: &selected.file.filename,
-            source: &selected.source,
-            modrinth: Some(ModrinthRecord {
-                loaders: selected.version.loaders.clone(),
-                game_versions: selected.version.game_versions.clone(),
-                required_dependencies: required_dependencies.into_iter().collect(),
-            }),
-        },
-    )
+    )?)
+}
+
+/// Whether a version of a plugin is for the server software and the Minecraft version of the
+/// target server, the condition of `--lazy` (inst-2).
+fn matches_server(version: &Version, target: &TargetServer) -> bool {
+    plugin_compatibility::agreement(&version.loaders, &version.game_versions, target)
+        == Agreement::Match
+}
+
+/// Every file of a plugin's Modrinth version is a candidate (plg-10).
+fn is_candidate(_version: &Version, _file: &VersionFile) -> bool {
+    true
 }
 
 /// Step 3 (fetch-2).
-fn fetch_from_url(client: &HttpClient, url: &UrlSource, yes: bool) -> Result<CachedJar, Error> {
+fn fetched_from_url(url: &UrlSource, yes: bool) -> Result<Fetched, Error> {
     let plugin_name = plugin_name_of_url(url, yes)?;
-    let file_name = format!("{plugin_name}{JAR_SUFFIX}");
-    store(
-        client,
-        &Fetched {
-            origin: Origin::Url(url.url()),
-            plugin_name: &plugin_name,
-            file_name: &file_name,
-            source: url.url(),
-            modrinth: None,
-        },
-    )
+    Ok(Fetched {
+        origin: Origin::Url(url.url().to_owned()),
+        file_name: format!("{plugin_name}{JAR_SUFFIX}"),
+        name: plugin_name,
+        source: url.url().to_owned(),
+        modrinth: None,
+    })
 }
 
 /// The name made from the URL, which the user may replace. Asked before the download, also when
 /// stdin is not a terminal; an empty answer keeps the made name (fetch-2).
 fn plugin_name_of_url(url: &UrlSource, yes: bool) -> Result<String, Error> {
-    let made = url.plugin_name();
+    let made = url.name(JAR_SUFFIX);
     output::write_to_stdout(&format!("plugin name from the URL: {made}"))?;
     if yes {
         return Ok(made);
@@ -156,50 +188,118 @@ fn plugin_name_of_url(url: &UrlSource, yes: bool) -> Result<String, Error> {
 }
 
 /// Step 4 (plg-5): the names of a local jar come from its path; its source is the text given.
-fn fetch_local_jar(
-    client: &HttpClient,
-    text: &str,
-    local_jar: &LocalJar,
-) -> Result<CachedJar, Error> {
-    store(
-        client,
-        &Fetched {
-            origin: Origin::File(&local_jar.path),
-            plugin_name: &local_jar.plugin_name,
-            file_name: &local_jar.jar_file_name,
-            source: text,
-            modrinth: None,
-        },
-    )
+fn fetched_local_jar(text: &str, local_jar: &LocalFile) -> Fetched {
+    Fetched {
+        origin: Origin::File(local_jar.path.clone()),
+        name: local_jar.name.clone(),
+        file_name: local_jar.file_name.clone(),
+        source: text.to_owned(),
+        modrinth: None,
+    }
 }
 
-/// Steps 5 and 6: `plugin_cache::store` checks both names before it touches the cache directory
-/// (plg-6), then stores the jar (fetch-1 to fetch-4).
-fn store(client: &HttpClient, fetched: &Fetched) -> Result<CachedJar, Error> {
+/// Steps 5 and 6: storing checks both names before it touches the cache directory (plg-6), then
+/// stores the jar (fetch-1 to fetch-4).
+fn store(client: &HttpClient, fetched: &Fetched) -> Result<CachedFile, Error> {
     // Storing may create the cache directory first.
-    super::fail_if_interrupted()?;
-    match plugin_cache::store(client, fetched)? {
+    interruption::fail_if_received()?;
+    match super::open_cache()?
+        .store(client, fetched)
+        .map_err(CacheError::from)?
+    {
         Stored::New(cached_jar) => Ok(cached_jar),
         Stored::AlreadyCached(already_cached) => {
-            let cached_jar = &already_cached.cached_jar;
+            let cached_jar = &already_cached.cached_file;
             output::write_to_stdout(&format!(
                 "the jar is the same as the cached jar of {}: {}",
                 cached_jar.name,
                 cached_jar.path.display()
             ))?;
-            Ok(already_cached.record_fetch()?)
+            Ok(already_cached.record_fetch().map_err(CacheError::from)?)
         }
     }
 }
 
 /// fetch-5: the plugin name, the version number, the source, the SHA-256, and the path.
-fn write_fetched(cached_jar: &CachedJar) -> Result<(), Error> {
+fn write_fetched(cached_jar: &CachedFile) -> Result<(), Error> {
     let path = cached_jar.path.display().to_string();
     Ok(output::write_to_stdout(&output::record(&[
         Field::Value(Some(&cached_jar.name)),
-        Field::Value(plugin_source::version_number_of(&cached_jar.source)),
+        Field::Value(cached_jar.version_number()),
         Field::Value(Some(&cached_jar.source)),
         Field::Value(Some(&cached_jar.sha256)),
         Field::Value(Some(&path)),
     ]))?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modrinth_api::response::FileHashes;
+    use crate::modrinth_api::selection::{AskError, Asker};
+
+    const TRUE_ENDING: &str =
+        include_str!("../../../tests/fixtures/modrinth-versions-true-ending.json");
+
+    /// The user cannot be asked (stdin is not a terminal, or `--yes`).
+    struct CannotBeAsked;
+
+    impl Asker for CannotBeAsked {
+        fn ask(&mut self, _question: &str) -> Result<Option<String>, AskError> {
+            Ok(None)
+        }
+    }
+
+    /// plg-10: every file of every version of a plugin is a candidate.
+    #[test]
+    fn every_plugin_file_is_a_candidate() {
+        let file = VersionFile {
+            filename: "Example-sources.jar".to_owned(),
+            url: "https://cdn.example/Example-sources.jar".to_owned(),
+            hashes: FileHashes {
+                sha512: "0".repeat(128),
+            },
+            file_type: Some("sources-jar".to_owned()),
+        };
+        let version = Version {
+            id: "v".to_owned(),
+            version_number: "1.0".to_owned(),
+            version_type: "release".to_owned(),
+            loaders: vec!["fabric".to_owned()],
+            game_versions: vec!["26.3".to_owned()],
+            date_published: "2026-10-21T00:00:00Z".parse().unwrap(),
+            dependencies: Vec::new(),
+            files: vec![file.clone()],
+        };
+
+        assert!(is_candidate(&version, &file));
+    }
+
+    /// plg-10: the plugin candidates of a number include every Modrinth version with it, the
+    /// mod's too, so they are told apart by `software`.
+    #[test]
+    fn plugin_candidates_of_a_number_include_every_version() {
+        let versions: Vec<Version> = serde_json::from_str(TRUE_ENDING).unwrap();
+        let values = vec!["1.1.4".to_owned()];
+
+        let error = selection::select(
+            "true-ending",
+            &versions,
+            &CANDIDATE_RULES,
+            Request::Values(&values),
+            &mut CannotBeAsked,
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                selection::Error::CannotAsk {
+                    attribute: "software",
+                    ..
+                }
+            ),
+            "{error}"
+        );
+    }
 }

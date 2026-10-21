@@ -15,7 +15,6 @@ use crate::interruption::{self, Signal};
 
 const DEFAULT_BASE_URL: &str = "https://api.modrinth.com/v2";
 const BASE_URL_VARIABLE: &str = "MISM_MODRINTH_URL";
-const PLUGIN_FACETS: &str = r#"[["project_type:plugin"]]"#;
 const NOT_FOUND: u16 = 404;
 const TOO_MANY_REQUESTS: u16 = 429;
 
@@ -46,17 +45,17 @@ pub enum Error {
 }
 
 impl Error {
+    /// None for a project that does not exist: its remedy names the search of the caller's
+    /// subcommand.
     pub fn hint(&self) -> Option<String> {
         match self {
             Error::Http(error) => error.hint(),
-            Error::ProjectNotFound { .. } => {
-                Some("run `mism plugin search <term>` to find the identifier".to_owned())
-            }
             Error::NotTheIdentifier { slug, .. } => Some(format!(
                 "use the identifier in the source: `modrinth:{slug}`"
             )),
             Error::RateLimited(_) => Some("wait a minute and run the command again".to_owned()),
             Error::BaseUrlNotUnicode
+            | Error::ProjectNotFound { .. }
             | Error::DependencyVersionNotReturned { .. }
             | Error::DependencyProjectNotReturned { .. }
             | Error::Interrupted(_) => None,
@@ -89,8 +88,9 @@ impl Error {
 
 /// The five Modrinth endpoints mism uses.
 pub trait ModrinthApi {
-    /// The plugins found for `query`, at most `limit`, in Modrinth's order (srch-1).
-    fn search(&self, query: &str, limit: u32) -> Result<Vec<SearchHit>, Error>;
+    /// The projects found for `query` with the search filter `facets`, at most `limit`, in
+    /// Modrinth's order (srch-1, dsrch-1).
+    fn search(&self, query: &str, facets: &str, limit: u32) -> Result<Vec<SearchHit>, Error>;
 
     /// The project whose slug or id is `identifier`, compared without case by Modrinth.
     fn project(&self, identifier: &str) -> Result<Project, Error>;
@@ -143,15 +143,11 @@ impl HttpModrinthApi {
 }
 
 impl ModrinthApi for HttpModrinthApi {
-    fn search(&self, query: &str, limit: u32) -> Result<Vec<SearchHit>, Error> {
+    fn search(&self, query: &str, facets: &str, limit: u32) -> Result<Vec<SearchHit>, Error> {
         let limit = limit.to_string();
         let results: SearchResults = self.get(
             "/search",
-            &[
-                ("query", query),
-                ("facets", PLUGIN_FACETS),
-                ("limit", &limit),
-            ],
+            &[("query", query), ("facets", facets), ("limit", &limit)],
         )?;
         Ok(results.hits)
     }
@@ -194,7 +190,7 @@ fn json_array(ids: &BTreeSet<String>) -> String {
     serde_json::to_string(ids).expect("a set of strings is representable in JSON")
 }
 
-/// The project whose slug is exactly `identifier`, case included (plg-3).
+/// The project whose slug is exactly `identifier`, case included (plg-3, dp-4).
 pub fn identified_project(api: &dyn ModrinthApi, identifier: &str) -> Result<Project, Error> {
     let project = api.project(identifier)?;
     if project.slug == identifier {
@@ -316,6 +312,7 @@ mod tests {
 
     const LUCKPERMS_PROJECT: &str =
         include_str!("../../tests/fixtures/modrinth-project-luckperms.json");
+    const PLUGIN_FACETS: &str = r#"[["project_type:plugin"]]"#;
 
     /// Answers every request with one response, and records the requests.
     struct FakeServer {
@@ -389,7 +386,7 @@ mod tests {
             ..server.api()
         };
 
-        let _ = api.search("luckperms", 10);
+        let _ = api.search("luckperms", PLUGIN_FACETS, 10);
 
         assert_eq!(server.requests().len(), 0);
     }
@@ -403,7 +400,7 @@ mod tests {
             ..server.api()
         };
 
-        let error = api.search("luckperms", 10).unwrap_err();
+        let error = api.search("luckperms", PLUGIN_FACETS, 10).unwrap_err();
 
         assert_eq!(error.interrupted_by(), Some(Signal::Terminate));
     }
@@ -416,24 +413,14 @@ mod tests {
             r#"{"error":"ratelimit_error","description":"You are being rate-limited."}"#,
         );
 
-        let error = server.api().search("luckperms", 10).unwrap_err();
+        let error = server
+            .api()
+            .search("luckperms", PLUGIN_FACETS, 10)
+            .unwrap_err();
 
         assert_eq!(
             error.hint().as_deref(),
             Some("wait a minute and run the command again")
-        );
-    }
-
-    /// 「Modrinth の API」 方法: a project that does not exist is reported with a hint to search.
-    #[test]
-    fn missing_project_hints_at_searching() {
-        let server = FakeServer::responding(404, "");
-
-        let error = server.api().project("nosuchplugin").unwrap_err();
-
-        assert_eq!(
-            error.hint().as_deref(),
-            Some("run `mism plugin search <term>` to find the identifier")
         );
     }
 
@@ -450,12 +437,15 @@ mod tests {
         );
     }
 
-    /// 「Modrinth の API」 方法: the search sends the term, the plugin facet, and the limit.
+    /// 「Modrinth の API」 方法: the search sends the term, the facet it is given, and the limit.
     #[test]
     fn search_sends_the_term_the_facet_and_the_limit() {
         let server = FakeServer::responding(200, r#"{"hits":[]}"#);
 
-        server.api().search("multiverse portals", 10).unwrap();
+        server
+            .api()
+            .search("multiverse portals", PLUGIN_FACETS, 10)
+            .unwrap();
 
         assert_eq!(
             server.only_request(),
@@ -463,10 +453,43 @@ mod tests {
                 "/v2/search".to_owned(),
                 pairs(&[
                     ("query", "multiverse portals"),
-                    ("facets", r#"[["project_type:plugin"]]"#),
+                    ("facets", PLUGIN_FACETS),
                     ("limit", "10")
                 ])
             )
+        );
+    }
+
+    /// 「Modrinth の API」 方法: the search sends the datapack facet it is given (dsrch-1).
+    #[test]
+    fn datapack_search_sends_the_datapack_facet() {
+        let server = FakeServer::responding(200, r#"{"hits":[]}"#);
+
+        server
+            .api()
+            .search("true ending", r#"[["project_type:datapack"]]"#, 10)
+            .unwrap();
+
+        assert_eq!(
+            server.only_request().1,
+            pairs(&[
+                ("query", "true ending"),
+                ("facets", r#"[["project_type:datapack"]]"#),
+                ("limit", "10")
+            ])
+        );
+    }
+
+    /// 「Modrinth の API」 方法: a project that does not exist is told apart, with the identifier.
+    #[test]
+    fn missing_project_is_reported_with_its_identifier() {
+        let server = FakeServer::responding(404, "");
+
+        let error = server.api().project("nosuchplugin").unwrap_err();
+
+        assert!(
+            matches!(&error, Error::ProjectNotFound { identifier, .. } if identifier == "nosuchplugin"),
+            "{error}"
         );
     }
 
@@ -532,7 +555,12 @@ mod tests {
     }
 
     impl ModrinthApi for FakeApi {
-        fn search(&self, _query: &str, _limit: u32) -> Result<Vec<SearchHit>, Error> {
+        fn search(
+            &self,
+            _query: &str,
+            _facets: &str,
+            _limit: u32,
+        ) -> Result<Vec<SearchHit>, Error> {
             unreachable!("not used by these tests")
         }
 

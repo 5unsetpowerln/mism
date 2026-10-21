@@ -23,6 +23,11 @@ impl Error {
     }
 }
 
+/// A signal that arrived before a subcommand began a change that it finishes once begun.
+#[derive(Debug, thiserror::Error)]
+#[error("interrupted by {0}")]
+pub struct Interrupted(pub Signal);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Signal {
     Interrupt,
@@ -84,4 +89,47 @@ pub fn received() -> Option<Signal> {
     Signal::ALL
         .into_iter()
         .find(|signal| signal.flag_value() == value)
+}
+
+/// Checked right before a subcommand starts to change the cache directory, where it places files,
+/// or `mism.toml`, and never after it started (d-pcmd-1, d-pcmd-2).
+pub fn fail_if_received() -> Result<(), Interrupted> {
+    fail_if(received())
+}
+
+fn fail_if(received: Option<Signal>) -> Result<(), Interrupted> {
+    match received {
+        Some(signal) => Err(Interrupted(signal)),
+        None => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// d-pcmd-1: a signal that arrived stops the subcommand before it changes anything.
+    #[test]
+    fn received_signal_stops_before_changes() {
+        assert!(matches!(
+            fail_if(Some(Signal::Terminate)),
+            Err(Interrupted(Signal::Terminate))
+        ));
+    }
+
+    /// d-pcmd-2: a signal that arrived stops a datapack subcommand before it changes the world
+    /// directory or `mism.toml`, with the same check.
+    #[test]
+    fn received_signal_stops_a_datapack_subcommand_before_changes() {
+        assert!(matches!(
+            fail_if(Some(Signal::Interrupt)),
+            Err(Interrupted(Signal::Interrupt))
+        ));
+    }
+
+    /// d-pcmd-1: without a signal the subcommand goes on.
+    #[test]
+    fn no_signal_lets_the_subcommand_go_on() {
+        assert!(fail_if(None).is_ok());
+    }
 }

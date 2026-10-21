@@ -23,7 +23,7 @@ fn serving_the_search(serve_instead: &[&str]) -> PluginEnvironment {
     let environment = PluginEnvironment::without_server();
     environment
         .modrinth
-        .mount_search(TERM, "multiverse-portals");
+        .mount_search(TERM, "plugin", "multiverse-portals");
     for slug in FOUND
         .into_iter()
         .filter(|slug| !serve_instead.contains(slug))
@@ -88,7 +88,7 @@ fn search_luckperms(change: impl FnOnce(&mut Value)) -> Output {
     let environment = PluginEnvironment::without_server();
     environment
         .modrinth
-        .mount_search_json("luckperms", &search_finding_luckperms());
+        .mount_search_json("luckperms", "plugin", &search_finding_luckperms());
     let mut versions = saved_version_list("luckperms");
     change(&mut versions);
     environment
@@ -201,8 +201,8 @@ fn version_for_folia_alone_is_chosen() {
     );
 }
 
-/// srch-2 (「mism plugin search の手順」 方法 4): of equally new versions, the first in the
-/// version list is chosen.
+/// srch-2 (「mism plugin search と mism datapack search の手順」 方法 4): of equally new
+/// versions, the first in the version list is chosen.
 #[test]
 fn first_of_equally_new_versions_is_chosen() {
     let output = search_with_playerportals_changed(|versions| {
@@ -235,7 +235,7 @@ fn plugin_without_a_version_for_paper_or_folia_has_hyphens() {
 #[test]
 fn search_without_hits_writes_nothing() {
     let environment = PluginEnvironment::without_server();
-    environment.modrinth.mount_search(TERM, "no-hit");
+    environment.modrinth.mount_search(TERM, "plugin", "no-hit");
 
     let output = search(&environment, &[]);
 
@@ -246,7 +246,7 @@ fn search_without_hits_writes_nothing() {
 #[test]
 fn search_without_hits_exits_with_status_0() {
     let environment = PluginEnvironment::without_server();
-    environment.modrinth.mount_search(TERM, "no-hit");
+    environment.modrinth.mount_search(TERM, "plugin", "no-hit");
 
     let output = search(&environment, &[]);
 
@@ -370,7 +370,8 @@ fn invalid_limit_exits_with_status_1() {
     assert_eq!(output.exit_code, 1);
 }
 
-/// srch-5 (「mism plugin search の手順」 方法 1): an invalid limit sends no request.
+/// srch-5 (「mism plugin search と mism datapack search の手順」 方法 1): an invalid limit sends
+/// no request.
 #[test]
 fn invalid_limit_sends_no_request() {
     let (environment, _output) = search_with_limit("101");

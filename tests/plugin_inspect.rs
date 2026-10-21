@@ -57,7 +57,9 @@ fn serving_multiverse_portals(environment: PluginEnvironment, bytes: &[u8]) -> P
         "multiverse-portals",
         &[ServedFile::new("multiverse-portals-5.3.0.jar", bytes)],
     );
-    environment.modrinth.mount_projects_multiverse_core();
+    environment
+        .modrinth
+        .mount_projects("multiverse-core", &["3wmN97b8"]);
     environment
 }
 

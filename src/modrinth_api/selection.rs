@@ -1,17 +1,17 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::fmt;
 use std::ptr;
 
 use jiff::Timestamp;
 
 use super::response::{Version, VersionFile};
-use crate::compatibility::{self, Agreement, TargetServer};
 use crate::interruption::Signal;
-use crate::plugin_source;
+use crate::modrinth_source;
 
-/// The five attributes of a candidate file (plg-10), by the names errors and questions use.
+/// The five attributes of a candidate file (plg-10, dp-5), by the names errors and questions use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Attribute {
+pub enum Attribute {
     Version,
     Software,
     MinecraftVersion,
@@ -31,17 +31,18 @@ impl Attribute {
     }
 }
 
-/// The attributes after `version`, in the order plg-10 narrows by them.
-const LATER_ATTRIBUTES: [Attribute; 4] = [
-    Attribute::Software,
-    Attribute::MinecraftVersion,
-    Attribute::ReleaseType,
-    Attribute::FileName,
-];
+/// Which files of a project are candidates, and the attributes that narrow them (plg-10, dp-5).
+#[derive(Debug, Clone, Copy)]
+pub struct CandidateRules {
+    /// Whether a file of a Modrinth version is a candidate.
+    pub is_candidate: fn(&Version, &VersionFile) -> bool,
+    /// The attributes after `version` that narrow the candidates, in their order.
+    pub later_attributes: &'static [Attribute],
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("Modrinth has no file of the plugin {identifier}")]
+    #[error("Modrinth has no file of {identifier}")]
     NoFiles { identifier: String },
     #[error(
         "no file of {partial_source} has the {attribute} {value:?}; its files have these values of {attribute}: {}",
@@ -107,6 +108,7 @@ pub enum Error {
 }
 
 impl Error {
+    /// None for no matching version: its remedy names the caller's subcommand.
     pub fn hint(&self) -> Option<String> {
         match self {
             Error::NoFileWithValue {
@@ -131,11 +133,8 @@ impl Error {
                     .collect::<Vec<_>>()
                     .join(", ")
             )),
-            Error::NoMatchingVersion { identifier, .. } => Some(format!(
-                "run `mism plugin versions modrinth:{identifier}` to see how each version matches \
-                 the server, and give a source with a version number"
-            )),
             Error::NoFiles { .. }
+            | Error::NoMatchingVersion { .. }
             | Error::ValuesLeftOver { .. }
             | Error::Indistinguishable { .. }
             | Error::ValueWithColon { .. }
@@ -164,10 +163,10 @@ pub enum AskError {
     Failed(Box<dyn std::error::Error + Send + Sync>),
 }
 
-/// Asks the user for a value; `subcommands/plugin/` implements it with stdin.
+/// Asks the user for a value; `subcommands/terminal_asker.rs` implements it with stdin.
 pub trait Asker {
     /// Writes `question` and reads one answer, or returns `None` without writing anything when
-    /// the user cannot be asked (plg-11).
+    /// the user cannot be asked (plg-11, dp-5).
     fn ask(&mut self, question: &str) -> Result<Option<String>, AskError>;
 }
 
@@ -175,13 +174,34 @@ pub trait Asker {
 #[derive(Debug, Clone, Copy)]
 pub enum Request<'a> {
     /// By the attribute values the source gives, asking for what they leave open (plg-10,
-    /// plg-11).
+    /// plg-11, dp-5).
     Values(&'a [String]),
-    /// For a source without values, from the newest version that matches the server (inst-2).
-    Lazy(TargetServer<'a>),
+    /// For a source without values, from the newest version that matches the server (inst-2,
+    /// dinst-2).
+    Lazy(Lazy<'a>),
 }
 
-/// The chosen file, its Modrinth version, and the source that names it (plg-12).
+/// How `--lazy` chooses: the condition for a Modrinth version to match the target server, and the
+/// server's server software and Minecraft version, which step 9 uses for the attributes that the
+/// narrowing did not decide and errors show.
+#[derive(Clone, Copy)]
+pub struct Lazy<'a> {
+    pub matches: &'a dyn Fn(&Version) -> bool,
+    pub software: &'a str,
+    pub minecraft_version: &'a str,
+}
+
+impl fmt::Debug for Lazy<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter
+            .debug_struct("Lazy")
+            .field("software", &self.software)
+            .field("minecraft_version", &self.minecraft_version)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The chosen file, its Modrinth version, and the source that names it (plg-12, dp-6).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Selection<'a> {
     pub version: &'a Version,
@@ -189,57 +209,70 @@ pub struct Selection<'a> {
     pub source: String,
 }
 
-/// Narrows every file of `versions`, the version list of the plugin `identifier`, to one.
+/// Narrows the candidate files of `versions`, the version list of the project `identifier`, to
+/// one by `rules`.
 pub fn select<'a>(
     identifier: &str,
     versions: &'a [Version],
+    rules: &CandidateRules,
     request: Request,
     asker: &mut dyn Asker,
 ) -> Result<Selection<'a>, Error> {
+    let project = Project {
+        rules: *rules,
+        identifier,
+    };
     // Step 1.
-    let all = all_candidates(versions);
+    let all = all_candidates(project.rules, versions);
     if all.is_empty() {
         return Err(Error::NoFiles {
             identifier: identifier.to_owned(),
         });
     }
     match request {
-        Request::Values(values) => select_by_values(identifier, all, values, asker),
-        Request::Lazy(target) => select_lazily(identifier, versions, &all, target, asker),
+        Request::Values(values) => select_by_values(project, all, values, asker),
+        Request::Lazy(lazy) => select_lazily(project, versions, &all, lazy, asker),
     }
 }
 
+/// The project whose files are narrowed, and by what rules.
+#[derive(Debug, Clone, Copy)]
+struct Project<'b> {
+    rules: CandidateRules,
+    identifier: &'b str,
+}
+
 fn select_by_values<'a>(
-    identifier: &str,
+    project: Project,
     all: Vec<Candidate<'a>>,
     values: &[String],
     asker: &mut dyn Asker,
 ) -> Result<Selection<'a>, Error> {
-    let mut narrowing = Narrowing::new(identifier, all, values, asker);
+    let mut narrowing = Narrowing::new(project, all, values, asker);
     let version = narrowing.version_value()?;
     narrowing.narrow(Attribute::Version, version)?;
     let chosen = narrowing.narrow_by_later_attributes()?;
     Ok(Selection {
         version: chosen.version,
         file: chosen.file,
-        source: source_text(identifier, &narrowing.used)?,
+        source: source_text(project.identifier, &narrowing.used)?,
     })
 }
 
 /// Steps 7 and 9.
 fn select_lazily<'a>(
-    identifier: &str,
+    project: Project,
     versions: &'a [Version],
     all: &[Candidate<'a>],
-    target: TargetServer,
+    lazy: Lazy,
     asker: &mut dyn Asker,
 ) -> Result<Selection<'a>, Error> {
-    let version = newest_matching_version(identifier, versions, &target)?;
-    let files = files_of(version);
-    let mut narrowing = Narrowing::new(identifier, files, &[], asker);
+    let version = newest_matching_version(project, versions, &lazy)?;
+    let files = files_of(project.rules, version);
+    let mut narrowing = Narrowing::new(project, files, &[], asker);
     narrowing.used.push(version.version_number.clone());
     let chosen = narrowing.narrow_by_later_attributes()?;
-    let source = lazy_source(identifier, all, chosen, &narrowing.decided, &target)?;
+    let source = lazy_source(project, all, chosen, &narrowing.decided, &lazy)?;
     Ok(Selection {
         version: chosen.version,
         file: chosen.file,
@@ -277,14 +310,19 @@ impl<'a> Candidate<'a> {
     }
 }
 
-fn all_candidates(versions: &[Version]) -> Vec<Candidate<'_>> {
-    versions.iter().flat_map(files_of).collect()
+fn all_candidates(rules: CandidateRules, versions: &[Version]) -> Vec<Candidate<'_>> {
+    versions
+        .iter()
+        .flat_map(|version| files_of(rules, version))
+        .collect()
 }
 
-fn files_of(version: &Version) -> Vec<Candidate<'_>> {
+/// The files of `version` that are candidates by `rules` (plg-10, dp-5).
+fn files_of(rules: CandidateRules, version: &Version) -> Vec<Candidate<'_>> {
     version
         .files
         .iter()
+        .filter(|file| (rules.is_candidate)(version, file))
         .map(|file| Candidate { version, file })
         .collect()
 }
@@ -327,7 +365,7 @@ fn shown_values(candidates: &[Candidate], attribute: Attribute) -> Vec<String> {
 
 /// The candidates while they are narrowed, the values given and used, and how to ask.
 struct Narrowing<'a, 'b> {
-    identifier: &'b str,
+    project: Project<'b>,
     candidates: Vec<Candidate<'a>>,
     given: VecDeque<String>,
     /// The values for the source, in the order they were used (plg-12).
@@ -339,13 +377,13 @@ struct Narrowing<'a, 'b> {
 
 impl<'a, 'b> Narrowing<'a, 'b> {
     fn new(
-        identifier: &'b str,
+        project: Project<'b>,
         candidates: Vec<Candidate<'a>>,
         given: &[String],
         asker: &'b mut dyn Asker,
     ) -> Narrowing<'a, 'b> {
         Narrowing {
-            identifier,
+            project,
             candidates,
             given: given.iter().cloned().collect(),
             used: Vec::new(),
@@ -389,7 +427,7 @@ impl<'a, 'b> Narrowing<'a, 'b> {
 
     /// Steps 4 and 5.
     fn narrow_by_later_attributes(&mut self) -> Result<Candidate<'a>, Error> {
-        for attribute in LATER_ATTRIBUTES {
+        for &attribute in self.project.rules.later_attributes {
             if self.candidates.len() == 1 {
                 break;
             }
@@ -455,7 +493,7 @@ impl<'a, 'b> Narrowing<'a, 'b> {
     /// `modrinth:`, the identifier, and the values used so far.
     fn partial_source(&self) -> String {
         let values: Vec<&str> = self.used.iter().map(String::as_str).collect();
-        plugin_source::modrinth_source(self.identifier, &values)
+        modrinth_source::source_text(self.project.identifier, &values)
     }
 }
 
@@ -467,56 +505,57 @@ fn source_text(identifier: &str, used: &[String]) -> Result<String, Error> {
         });
     }
     let values: Vec<&str> = used.iter().map(String::as_str).collect();
-    Ok(plugin_source::modrinth_source(identifier, &values))
+    Ok(modrinth_source::source_text(identifier, &values))
 }
 
-/// Step 7: of the versions with files that match the server, the newest; of equally new ones,
-/// the first in the list.
+/// Step 7: of the versions with candidates that match the server, the newest; of equally new
+/// ones, the first in the list.
 fn newest_matching_version<'a>(
-    identifier: &str,
+    project: Project,
     versions: &'a [Version],
-    target: &TargetServer,
+    lazy: &Lazy,
 ) -> Result<&'a Version, Error> {
     versions
         .iter()
         .enumerate()
         .filter(|(_, version)| {
-            !version.files.is_empty()
-                && compatibility::agreement(&version.loaders, &version.game_versions, target)
-                    == Agreement::Match
+            !files_of(project.rules, version).is_empty() && (lazy.matches)(version)
         })
         .max_by_key(|(index, version)| (version.date_published, Reverse(*index)))
         .map(|(_, version)| version)
         .ok_or_else(|| Error::NoMatchingVersion {
-            identifier: identifier.to_owned(),
-            software: target.software.to_owned(),
-            minecraft_version: target.minecraft_version.to_owned(),
+            identifier: project.identifier.to_owned(),
+            software: lazy.software.to_owned(),
+            minecraft_version: lazy.minecraft_version.to_owned(),
         })
 }
 
-/// Step 9: narrows every file again without asking, by the chosen file's values and the server,
-/// so that the source names the chosen file without `--lazy` (plg-12).
+/// Step 9: narrows every candidate again without asking, by the chosen file's values and the
+/// server, so that the source names the chosen file without `--lazy` (plg-12, dp-6).
 fn lazy_source(
-    identifier: &str,
+    project: Project,
     all: &[Candidate],
     chosen: Candidate,
     decided: &[(Attribute, String)],
-    target: &TargetServer,
+    lazy: &Lazy,
 ) -> Result<String, Error> {
     let mut candidates = all.to_vec();
     let mut used = Vec::new();
-    for attribute in [Attribute::Version].into_iter().chain(LATER_ATTRIBUTES) {
+    for &attribute in [Attribute::Version]
+        .iter()
+        .chain(project.rules.later_attributes)
+    {
         if attribute != Attribute::Version
             && (candidates.len() == 1 || kinds(&candidates, attribute) == 1)
         {
             continue;
         }
-        let value = lazy_value(attribute, chosen, decided, target);
+        let value = lazy_value(attribute, chosen, decided, lazy);
         candidates.retain(|candidate| candidate.has(attribute, &value));
         used.push(value);
     }
     match candidates.as_slice() {
-        [only] if only.is(chosen) => source_text(identifier, &used),
+        [only] if only.is(chosen) => source_text(project.identifier, &used),
         _ => Err(Error::LazySourceAmbiguous {
             url: chosen.file.url.clone(),
         }),
@@ -527,7 +566,7 @@ fn lazy_value(
     attribute: Attribute,
     chosen: Candidate,
     decided: &[(Attribute, String)],
-    target: &TargetServer,
+    lazy: &Lazy,
 ) -> String {
     let decided_or = |server_value: &str| {
         decided
@@ -537,8 +576,8 @@ fn lazy_value(
     };
     match attribute {
         Attribute::Version => chosen.version.version_number.clone(),
-        Attribute::Software => decided_or(target.software),
-        Attribute::MinecraftVersion => decided_or(target.minecraft_version),
+        Attribute::Software => decided_or(lazy.software),
+        Attribute::MinecraftVersion => decided_or(lazy.minecraft_version),
         Attribute::ReleaseType => chosen.version.version_type.clone(),
         Attribute::FileName => chosen.file.filename.clone(),
     }
@@ -554,10 +593,28 @@ mod tests {
     const FASTASYNCWORLDEDIT: &str =
         include_str!("../../tests/fixtures/modrinth-versions-fastasyncworldedit.json");
     const LUCKPERMS: &str = include_str!("../../tests/fixtures/modrinth-versions-luckperms.json");
-    const PAPER_26_3: TargetServer = TargetServer {
-        software: "paper",
-        minecraft_version: "26.3",
+    /// Every file is a candidate, narrowed by all five attributes.
+    const RULES: CandidateRules = CandidateRules {
+        is_candidate: |_, _| true,
+        later_attributes: &[
+            Attribute::Software,
+            Attribute::MinecraftVersion,
+            Attribute::ReleaseType,
+            Attribute::FileName,
+        ],
     };
+
+    /// `--lazy` on a Paper 26.3 server, where a version matches when it supports both.
+    fn paper_26_3() -> Lazy<'static> {
+        Lazy {
+            matches: &|version| {
+                version.loaders.iter().any(|loader| loader == "paper")
+                    && version.game_versions.iter().any(|game| game == "26.3")
+            },
+            software: "paper",
+            minecraft_version: "26.3",
+        }
+    }
 
     fn saved(json: &str) -> Vec<Version> {
         serde_json::from_str(json).unwrap()
@@ -591,6 +648,7 @@ mod tests {
                     hashes: FileHashes {
                         sha512: "0".repeat(128),
                     },
+                    file_type: None,
                 })
                 .collect(),
         }
@@ -646,7 +704,7 @@ mod tests {
         asker: &mut dyn Asker,
     ) -> Result<(String, String), Error> {
         let values = strings(values);
-        select("example", versions, Request::Values(&values), asker)
+        select("example", versions, &RULES, Request::Values(&values), asker)
             .map(|selection| (selection.file.filename.clone(), selection.source))
     }
 
@@ -659,6 +717,7 @@ mod tests {
         let selection = select(
             "luckperms",
             &versions,
+            &RULES,
             Request::Values(&values),
             &mut NotAsked,
         )
@@ -903,7 +962,8 @@ mod tests {
         let selection = select(
             "fastasyncworldedit",
             &versions,
-            Request::Lazy(PAPER_26_3),
+            &RULES,
+            Request::Lazy(paper_26_3()),
             &mut NotAsked,
         )
         .unwrap();
@@ -918,7 +978,8 @@ mod tests {
         let lazy = select(
             "fastasyncworldedit",
             &versions,
-            Request::Lazy(PAPER_26_3),
+            &RULES,
+            Request::Lazy(paper_26_3()),
             &mut NotAsked,
         )
         .unwrap();
@@ -927,6 +988,7 @@ mod tests {
         let again = select(
             "fastasyncworldedit",
             &versions,
+            &RULES,
             Request::Values(&values),
             &mut NotAsked,
         )
@@ -1010,7 +1072,8 @@ mod tests {
             select(
                 "example",
                 &versions,
-                Request::Lazy(PAPER_26_3),
+                &RULES,
+                Request::Lazy(paper_26_3()),
                 &mut NotAsked
             ),
             Err(Error::NoMatchingVersion { .. })
@@ -1054,7 +1117,8 @@ mod tests {
         let selection = select(
             "example",
             &versions,
-            Request::Lazy(PAPER_26_3),
+            &RULES,
+            Request::Lazy(paper_26_3()),
             &mut NotAsked,
         )
         .unwrap();

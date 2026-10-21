@@ -1,18 +1,23 @@
 use std::path::PathBuf;
 
-use super::{CommonStepError, inspect};
-use crate::command_line::PlaceArguments;
-use crate::interruption::Signal;
+use super::{CacheError, PlacedFilesError, SourceError, inspect};
+use crate::command_line::PluginPlaceArguments;
+use crate::fetched_file_cache::CachedFile;
+use crate::interruption::{self, Interrupted, Signal};
 use crate::output::{self, Field};
-use crate::plugin_cache::CachedJar;
-use crate::plugin_source;
 use crate::server_directory::ServerDirectory;
-use crate::server_directory::plugins::{self, JarToPlace};
+use crate::server_directory::placed_files::FileToPlace;
+use crate::server_directory::plugins;
+use crate::subcommands::target_server;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
-    Source(#[from] plugin_source::Error),
+    TargetServer(#[from] target_server::Error),
+    #[error(transparent)]
+    Source(#[from] SourceError),
+    #[error(transparent)]
+    Cache(#[from] CacheError),
     #[error("the cache directory has no jar fetched from {fetched_from}")]
     NotFetched { fetched_from: String },
     #[error(transparent)]
@@ -28,9 +33,9 @@ pub enum Error {
         conflict: Vec<PathBuf>,
     },
     #[error(transparent)]
-    Plugins(#[from] plugins::Error),
+    PlacedFiles(#[from] PlacedFilesError),
     #[error(transparent)]
-    CommonStep(#[from] CommonStepError),
+    Interrupted(#[from] Interrupted),
     #[error(transparent)]
     Output(#[from] output::Error),
 }
@@ -57,41 +62,46 @@ impl Error {
                     .collect::<Vec<_>>()
                     .join(", ")
             )),
+            Error::TargetServer(error) => error.hint(),
             Error::Source(error) => error.hint(),
+            Error::Cache(error) => error.hint(),
             Error::Inspect(error) => error.hint(),
-            Error::Plugins(error) => error.hint(),
-            Error::CommonStep(error) => error.hint(),
+            Error::PlacedFiles(error) => error.hint(),
             Error::Output(error) => error.hint(),
-            Error::PreventedByInspection { .. } => None,
+            Error::PreventedByInspection { .. } | Error::Interrupted(_) => None,
         }
     }
 
     pub fn interrupted_by(&self) -> Option<Signal> {
         match self {
+            Error::Cache(error) => error.interrupted_by(),
             Error::Inspect(error) => error.interrupted_by(),
-            Error::CommonStep(error) => error.interrupted_by(),
-            Error::Source(_)
+            Error::Interrupted(Interrupted(signal)) => Some(*signal),
+            Error::TargetServer(_)
+            | Error::Source(_)
             | Error::NotFetched { .. }
             | Error::PreventedByInspection { .. }
-            | Error::Plugins(_)
+            | Error::PlacedFiles(_)
             | Error::Output(_) => None,
         }
     }
 }
 
 /// `mism plugin place`. Nothing in it communicates (place-1).
-pub fn run(arguments: &PlaceArguments) -> Result<(), Error> {
-    let server = super::required_target_server()?;
+pub fn run(arguments: &PluginPlaceArguments) -> Result<(), Error> {
+    let server = target_server::required()?;
     let cached_jar = find_fetched(&arguments.source)?;
     inspect_for_placement(&server, &cached_jar)?;
-    plugins::check_placeable(&server, &cached_jar.name, &cached_jar.file_name)?;
+    plugins::placed_jars(&server)
+        .check_placeable(&cached_jar.name, &cached_jar.file_name)
+        .map_err(PlacedFilesError::from)?;
     place_jar(&server, &cached_jar)
 }
 
 /// Step 2 (place-1).
-fn find_fetched(text: &str) -> Result<CachedJar, Error> {
-    let source = plugin_source::parse(text)?;
-    inspect::find_in_cache(text, &source)?.ok_or_else(|| Error::NotFetched {
+fn find_fetched(text: &str) -> Result<CachedFile, Error> {
+    let source = super::parse_source(text)?;
+    super::find_in_cache(text, &source)?.ok_or_else(|| Error::NotFetched {
         fetched_from: text.to_owned(),
     })
 }
@@ -100,7 +110,7 @@ fn find_fetched(text: &str) -> Result<CachedJar, Error> {
 /// placement (place-6, inst-4).
 pub fn inspect_for_placement(
     server: &ServerDirectory,
-    cached_jar: &CachedJar,
+    cached_jar: &CachedFile,
 ) -> Result<(), Error> {
     let inspection = inspect::write_inspection(cached_jar)?;
     let judgement = inspect::write_judgement(&inspection, server)?;
@@ -113,34 +123,33 @@ pub fn inspect_for_placement(
         conflict: judgement
             .conflict
             .iter()
-            .map(|file_name| server.plugins_path().join(file_name))
+            .map(|file_name| plugins::path(server).join(file_name))
             .collect(),
     })
 }
 
 /// Steps 5 to 7, the placement procedure (配置の手順) that `install` uses too (place-2, place-5,
 /// plg-7, plg-8).
-pub fn place_jar(server: &ServerDirectory, cached_jar: &CachedJar) -> Result<(), Error> {
-    super::fail_if_interrupted()?;
-    plugins::place(
-        server,
-        &JarToPlace {
+pub fn place_jar(server: &ServerDirectory, cached_jar: &CachedFile) -> Result<(), Error> {
+    interruption::fail_if_received()?;
+    plugins::placed_jars(server)
+        .place(&FileToPlace {
             cached_path: &cached_jar.path,
             sha256: &cached_jar.sha256,
-            plugin_name: &cached_jar.name,
+            name: &cached_jar.name,
             source: &cached_jar.source,
             file_name: &cached_jar.file_name,
-        },
-    )?;
+        })
+        .map_err(PlacedFilesError::from)?;
     write_placed(cached_jar)?;
     Ok(super::write_takes_effect_notice()?)
 }
 
 /// place-5: the plugin name, the version number, and the jar file name.
-fn write_placed(cached_jar: &CachedJar) -> Result<(), Error> {
+fn write_placed(cached_jar: &CachedFile) -> Result<(), Error> {
     Ok(output::write_to_stdout(&output::record(&[
         Field::Value(Some(&cached_jar.name)),
-        Field::Value(plugin_source::version_number_of(&cached_jar.source)),
+        Field::Value(cached_jar.version_number()),
         Field::Value(Some(&cached_jar.file_name)),
     ]))?)
 }

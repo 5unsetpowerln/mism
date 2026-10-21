@@ -587,8 +587,8 @@ fn record_with_the_same_name_changes_nothing() {
     assert_eq!(environment.server_state(), before);
 }
 
-/// inst-4, place-3 (「mism plugin install の手順」 方法 6): a record with the same name is found
-/// before the confirmation is asked.
+/// inst-4, place-3 (「mism plugin install と mism datapack install の手順」 方法 6): a record with
+/// the same name is found before the confirmation is asked.
 #[test]
 fn record_with_the_same_name_is_found_before_asking() {
     let (_environment, output, _before) = install_local_example(

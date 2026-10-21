@@ -110,6 +110,24 @@ impl fmt::Display for MinecraftVersion {
     }
 }
 
+/// The newest of `versions`, leaving out the ones mism cannot parse; the first of equally new
+/// ones. None when mism can parse none of them (srch-2, vers-2, dsrch-2, dvers-2).
+pub fn newest(versions: &[String]) -> Option<&str> {
+    let mut newest: Option<(MinecraftVersion, &str)> = None;
+    for text in versions {
+        let Ok(version) = MinecraftVersion::parse(text) else {
+            continue;
+        };
+        if newest
+            .as_ref()
+            .is_none_or(|(current, _)| version > *current)
+        {
+            newest = Some((version, text));
+        }
+    }
+    newest.map(|(_, text)| text)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,5 +253,30 @@ mod tests {
     #[test]
     fn display_prints_original_text() {
         assert_eq!(version("26.3.0").to_string(), "26.3.0");
+    }
+
+    fn strings(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_owned()).collect()
+    }
+
+    /// d-compat-5
+    #[test]
+    fn newest_minecraft_version_includes_snapshots_and_skips_unparsable_ones() {
+        assert_eq!(
+            newest(&strings(&["26.3", "26.4-snapshot-5", "25w46a"])),
+            Some("26.4-snapshot-5")
+        );
+    }
+
+    /// d-compat-6
+    #[test]
+    fn no_parsable_minecraft_version_has_no_newest() {
+        assert_eq!(newest(&strings(&["25w46a", "b1.7.3"])), None);
+    }
+
+    /// 「Minecraft のバージョンの新旧の判定」 方法: of equally new versions the first is the newest.
+    #[test]
+    fn first_of_equally_new_versions_is_the_newest() {
+        assert_eq!(newest(&strings(&["1.21", "1.21.0"])), Some("1.21"));
     }
 }

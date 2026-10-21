@@ -1,26 +1,22 @@
-use std::cmp::Reverse;
-use std::collections::BTreeSet;
-
-use super::CommonStepError;
+use super::SourceError;
 use crate::command_line::PluginVersionsArguments;
-use crate::compatibility::{self, TargetServer};
-use crate::http_client::{self, HttpClient};
 use crate::interruption::Signal;
+use crate::minecraft_version;
 use crate::modrinth_api::response::Version;
-use crate::modrinth_api::{self, HttpModrinthApi, ModrinthApi};
+use crate::modrinth_source;
 use crate::output::{self, Field};
-use crate::plugin_source;
+use crate::plugin_compatibility::{self, TargetServer};
+use crate::subcommands::modrinth_versions::{self, Listed};
+use crate::subcommands::target_server;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
-    Source(#[from] plugin_source::Error),
+    Argument(#[from] SourceError),
     #[error(transparent)]
-    CommonStep(#[from] CommonStepError),
+    TargetServer(#[from] target_server::Error),
     #[error(transparent)]
-    Http(#[from] http_client::Error),
-    #[error(transparent)]
-    Modrinth(#[from] modrinth_api::Error),
+    Versions(#[from] modrinth_versions::Error),
     #[error(transparent)]
     Output(#[from] output::Error),
 }
@@ -28,20 +24,20 @@ pub enum Error {
 impl Error {
     pub fn hint(&self) -> Option<String> {
         match self {
-            Error::Source(error) => error.hint(),
-            Error::CommonStep(error) => error.hint(),
-            Error::Http(error) => error.hint(),
-            Error::Modrinth(error) => error.hint(),
+            Error::Argument(error) => error.hint(),
+            Error::TargetServer(error) => error.hint(),
+            Error::Versions(modrinth_versions::Error::Modrinth(error)) => {
+                super::modrinth_hint(error)
+            }
+            Error::Versions(error) => error.hint(),
             Error::Output(error) => error.hint(),
         }
     }
 
     pub fn interrupted_by(&self) -> Option<Signal> {
         match self {
-            Error::CommonStep(error) => error.interrupted_by(),
-            Error::Http(error) => error.interrupted_by(),
-            Error::Modrinth(error) => error.interrupted_by(),
-            Error::Source(_) | Error::Output(_) => None,
+            Error::Versions(error) => error.interrupted_by(),
+            Error::Argument(_) | Error::TargetServer(_) | Error::Output(_) => None,
         }
     }
 }
@@ -49,28 +45,18 @@ impl Error {
 /// `mism plugin versions` (vers-1 to vers-6). It writes the names of the values and the versions
 /// only after every request succeeded (vers-5).
 pub fn run(arguments: &PluginVersionsArguments) -> Result<(), Error> {
-    let identifier = plugin_source::parse_versions_argument(&arguments.plugin)?;
-    let server = super::target_server()?;
-    let api = HttpModrinthApi::new(HttpClient::new()?)?;
-    let project = modrinth_api::identified_project(&api, &identifier)?;
-    let versions = api.project_versions(&project.id)?;
-    let dependencies =
-        modrinth_api::required_dependency_identifiers(&api, &versions.iter().collect::<Vec<_>>())?;
+    let identifier =
+        modrinth_source::parse_project(&arguments.plugin).map_err(SourceError::from)?;
+    let server = target_server::current()?;
+    let listed = modrinth_versions::listed(&identifier, is_listed)?;
     let target = server.as_ref().map(super::target_of);
     write_names_of_the_values(target.as_ref())?;
-    write_versions(&newest_first(&versions, &dependencies), target.as_ref())
+    write_versions(&listed, target.as_ref())
 }
 
-/// Step 6: each version with the identifiers of its required dependencies, newest first; versions
-/// published at the same time keep Modrinth's order (vers-1).
-fn newest_first<'a>(
-    versions: &'a [Version],
-    dependencies: &'a [BTreeSet<String>],
-) -> Vec<(&'a Version, &'a BTreeSet<String>)> {
-    let mut listed: Vec<_> = versions.iter().zip(dependencies).collect();
-    // Stable, so equally new versions keep their order.
-    listed.sort_by_key(|(version, _)| Reverse(version.date_published));
-    listed
+/// Step 4: `mism plugin versions` lists every version of a plugin (vers-1).
+fn is_listed(_version: &Version) -> bool {
+    true
 }
 
 /// Step 7: the names of the values of a version record, with `declared` at the end when there is a
@@ -90,35 +76,34 @@ fn write_names_of_the_values(target: Option<&TargetServer>) -> Result<(), Error>
 }
 
 /// Step 8: one record per version (vers-1, vers-2, vers-3, plg-9).
-fn write_versions(
-    listed: &[(&Version, &BTreeSet<String>)],
-    target: Option<&TargetServer>,
-) -> Result<(), Error> {
+fn write_versions(listed: &[Listed], target: Option<&TargetServer>) -> Result<(), Error> {
     let lines: Vec<String> = listed
         .iter()
-        .map(|(version, dependencies)| version_line(version, dependencies, target))
+        .map(|listed| version_line(listed, target))
         .collect();
     Ok(output::write_to_stdout(&lines.join("\n"))?)
 }
 
 /// The version number, the release type, the server software, the newest Minecraft version, and
 /// the required dependencies, then with a target server the agreement with it (vers-2, vers-3).
-fn version_line(
-    version: &Version,
-    dependencies: &BTreeSet<String>,
-    target: Option<&TargetServer>,
-) -> String {
+fn version_line(listed: &Listed, target: Option<&TargetServer>) -> String {
+    let version = &listed.version;
     let agreement = target.map(|target| {
-        compatibility::agreement(&version.loaders, &version.game_versions, target).to_string()
+        plugin_compatibility::agreement(&version.loaders, &version.game_versions, target)
+            .to_string()
     });
     let mut fields = vec![
         Field::Value(Some(&version.version_number)),
         Field::Value(Some(&version.version_type)),
         Field::List(version.loaders.iter().map(String::as_str).collect()),
-        Field::Value(compatibility::newest_minecraft_version(
-            &version.game_versions,
-        )),
-        Field::List(dependencies.iter().map(String::as_str).collect()),
+        Field::Value(minecraft_version::newest(&version.game_versions)),
+        Field::List(
+            listed
+                .required_dependencies
+                .iter()
+                .map(String::as_str)
+                .collect(),
+        ),
     ];
     fields.extend(
         agreement
@@ -126,4 +111,26 @@ fn version_line(
             .map(|agreement| Field::Value(Some(agreement))),
     );
     output::record(&fields)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// vers-1: `versions` lists every version of a plugin.
+    #[test]
+    fn plugin_versions_are_all_listed() {
+        let version = Version {
+            id: "v".to_owned(),
+            version_number: "1.0".to_owned(),
+            version_type: "release".to_owned(),
+            loaders: vec!["fabric".to_owned()],
+            game_versions: vec!["26.3".to_owned()],
+            date_published: "2026-10-21T00:00:00Z".parse().unwrap(),
+            dependencies: Vec::new(),
+            files: Vec::new(),
+        };
+
+        assert!(is_listed(&version));
+    }
 }

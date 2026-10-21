@@ -42,6 +42,7 @@ pub enum Subcommand {
     New(NewArguments),
     Versions(VersionsArguments),
     Plugin(PluginArguments),
+    Datapack(DatapackArguments),
 }
 
 #[derive(Debug)]
@@ -69,6 +70,7 @@ impl CommandLine {
                 software: parse_software("versions", &raw.software),
             }),
             RawSubcommand::Plugin(arguments) => Subcommand::Plugin(arguments),
+            RawSubcommand::Datapack(arguments) => Subcommand::Datapack(arguments),
         };
         CommandLine { subcommand }
     }
@@ -108,6 +110,8 @@ enum RawSubcommand {
     Versions(RawVersionsArguments),
     /// Manage the plugins of the server in the current directory
     Plugin(PluginArguments),
+    /// Manage the datapacks of the world of the server in the current directory
+    Datapack(DatapackArguments),
 }
 
 #[derive(Debug, clap::Args)]
@@ -127,8 +131,9 @@ struct RawVersionsArguments {
     software: String,
 }
 
-// The plugin subcommands take every value as a string, which their steps check, so that a value
-// of the wrong form is an error with exit status 1 (err-9) rather than clap's 2.
+// The subcommands of `plugin` and `datapack` take every value as a string, which their steps
+// check, so that a value of the wrong form is an error with exit status 1 (err-9) rather than
+// clap's 2.
 
 #[derive(Debug, clap::Args)]
 pub struct PluginArguments {
@@ -139,25 +144,25 @@ pub struct PluginArguments {
 #[derive(Debug, clap::Subcommand)]
 pub enum PluginSubcommand {
     /// Search Modrinth for plugins
-    Search(SearchArguments),
+    Search(PluginSearchArguments),
     /// List the Modrinth versions of a plugin
     Versions(PluginVersionsArguments),
     /// Fetch a plugin's jar into the cache directory
-    Fetch(FetchArguments),
+    Fetch(PluginFetchArguments),
     /// Show what a plugin's jar declares and how it fits the server
-    Inspect(InspectArguments),
+    Inspect(PluginInspectArguments),
     /// Place a fetched plugin's jar in plugins/ of the server
-    Place(PlaceArguments),
+    Place(PluginPlaceArguments),
     /// Fetch, inspect, and place a plugin's jar
-    Install(InstallArguments),
+    Install(PluginInstallArguments),
     /// List the plugins of the server, or with --global the fetched ones
-    List(ListArguments),
+    List(PluginListArguments),
     /// Remove a placed plugin from the server
-    Remove(RemoveArguments),
+    Remove(PluginRemoveArguments),
 }
 
 #[derive(Debug, clap::Args)]
-pub struct SearchArguments {
+pub struct PluginSearchArguments {
     /// Words to search Modrinth for
     pub term: String,
     /// How many plugins to show, from 10 to 100 (default: 10)
@@ -173,7 +178,7 @@ pub struct PluginVersionsArguments {
 }
 
 #[derive(Debug, clap::Args)]
-pub struct FetchArguments {
+pub struct PluginFetchArguments {
     /// modrinth:<identifier>[:<value>...], a jar URL, or the path of a local jar file
     pub source: String,
     /// Use the plugin name made from a URL without asking
@@ -182,7 +187,7 @@ pub struct FetchArguments {
 }
 
 #[derive(Debug, clap::Args)]
-pub struct InspectArguments {
+pub struct PluginInspectArguments {
     /// modrinth:<identifier>[:<value>...], a jar URL, or the path of a local jar file
     pub source: String,
     /// Use the plugin name made from a URL without asking
@@ -191,13 +196,13 @@ pub struct InspectArguments {
 }
 
 #[derive(Debug, clap::Args)]
-pub struct PlaceArguments {
+pub struct PluginPlaceArguments {
     /// The source the jar was fetched with, or the path of a local jar file
     pub source: String,
 }
 
 #[derive(Debug, clap::Args)]
-pub struct InstallArguments {
+pub struct PluginInstallArguments {
     /// modrinth:<identifier>[:<value>...], a jar URL, or the path of a local jar file
     pub source: String,
     /// For modrinth:<identifier> alone, take the newest version that matches the server
@@ -209,14 +214,112 @@ pub struct InstallArguments {
 }
 
 #[derive(Debug, clap::Args)]
-pub struct ListArguments {
+pub struct PluginListArguments {
     /// List the plugins in the cache directory instead
     #[arg(long)]
     pub global: bool,
 }
 
 #[derive(Debug, clap::Args)]
-pub struct RemoveArguments {
+pub struct PluginRemoveArguments {
     /// The plugin name in the record of mism.toml
+    pub name: String,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct DatapackArguments {
+    #[command(subcommand)]
+    pub subcommand: DatapackSubcommand,
+}
+
+#[derive(Debug, clap::Subcommand)]
+pub enum DatapackSubcommand {
+    /// Search Modrinth for datapacks
+    Search(DatapackSearchArguments),
+    /// List the Modrinth versions of a datapack
+    Versions(DatapackVersionsArguments),
+    /// Fetch a datapack file into the cache directory
+    Fetch(DatapackFetchArguments),
+    /// Show what a datapack file declares and how it fits the server
+    Inspect(DatapackInspectArguments),
+    /// Place a fetched datapack file in datapacks/ of the server's world
+    Place(DatapackPlaceArguments),
+    /// Fetch, inspect, and place a datapack file
+    Install(DatapackInstallArguments),
+    /// List the datapacks of the server's world, or with --global the fetched ones
+    List(DatapackListArguments),
+    /// Remove a placed datapack from the server's world
+    Remove(DatapackRemoveArguments),
+}
+
+#[derive(Debug, clap::Args)]
+pub struct DatapackSearchArguments {
+    /// Words to search Modrinth for
+    pub term: String,
+    /// How many datapacks to show, from 10 to 100 (default: 10)
+    #[arg(long, value_name = "COUNT")]
+    pub limit: Option<String>,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct DatapackVersionsArguments {
+    /// The datapack on Modrinth
+    #[arg(value_name = "modrinth:IDENTIFIER")]
+    pub datapack: String,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct DatapackFetchArguments {
+    /// modrinth:<identifier>[:<value>...], a datapack file URL, or the path of a local datapack
+    /// file
+    pub source: String,
+    /// Ask nothing: use the datapack name made from a URL, and fail where a Modrinth value is
+    /// left to choose
+    #[arg(long)]
+    pub yes: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct DatapackInspectArguments {
+    /// modrinth:<identifier>[:<value>...], a datapack file URL, or the path of a local datapack
+    /// file
+    pub source: String,
+    /// Ask nothing: use the datapack name made from a URL, and fail where a Modrinth value is
+    /// left to choose
+    #[arg(long)]
+    pub yes: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct DatapackPlaceArguments {
+    /// The source the datapack file was fetched with, or the path of a local datapack file
+    pub source: String,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct DatapackInstallArguments {
+    /// modrinth:<identifier>[:<value>...], a datapack file URL, or the path of a local datapack
+    /// file
+    pub source: String,
+    /// For modrinth:<identifier> alone, take the newest version that matches the server's
+    /// Minecraft version
+    #[arg(long)]
+    pub lazy: bool,
+    /// Ask nothing: place the datapack file, use the datapack name made from a URL, and fail
+    /// where a Modrinth value is left to choose
+    #[arg(long)]
+    pub yes: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct DatapackListArguments {
+    /// List the datapacks in the cache directory instead
+    #[arg(long)]
+    pub global: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct DatapackRemoveArguments {
+    /// The datapack name in the record of mism.toml
     pub name: String,
 }

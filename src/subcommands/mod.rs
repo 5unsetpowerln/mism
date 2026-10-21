@@ -1,5 +1,11 @@
+pub mod datapack;
+mod modrinth_fetch;
+mod modrinth_search;
+mod modrinth_versions;
 pub mod new;
 pub mod plugin;
+mod target_server;
+mod terminal_asker;
 pub mod versions;
 
 use crate::command_line::Software;

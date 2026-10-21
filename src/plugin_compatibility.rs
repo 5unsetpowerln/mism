@@ -2,10 +2,9 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
 
+use crate::fetched_file_cache::{CachedFile, ModrinthRecord};
 use crate::minecraft_version::{self, MinecraftVersion};
-use crate::plugin_cache::{CachedJar, ModrinthRecord};
 use crate::plugin_jar::Declaration;
-use crate::plugin_source;
 
 const FOLIA: &str = "folia";
 const PAPER: &str = "paper";
@@ -82,24 +81,6 @@ pub fn agreement(
 
 fn contains(list: &[impl AsRef<str>], value: &str) -> bool {
     list.iter().any(|element| element.as_ref() == value)
-}
-
-/// The newest of the Minecraft versions Modrinth states, leaving out the ones mism cannot parse;
-/// the first of equally new ones (srch-2, vers-2).
-pub fn newest_minecraft_version(versions: &[String]) -> Option<&str> {
-    let mut newest: Option<(MinecraftVersion, &str)> = None;
-    for text in versions {
-        let Ok(version) = MinecraftVersion::parse(text) else {
-            continue;
-        };
-        if newest
-            .as_ref()
-            .is_none_or(|(current, _)| version > *current)
-        {
-            newest = Some((version, text));
-        }
-    }
-    newest.map(|(_, text)| text)
 }
 
 /// Where a value came from: the jar's declaration, Modrinth's statements, both, or neither.
@@ -221,34 +202,21 @@ pub struct Compatibility {
     pub optional_dependencies: SourcedList,
 }
 
-/// The 13 values of the inspection description (insp-2) of a jar in the cache directory.
+/// The 13 values of the inspection description (insp-2) of a jar in the cache directory: those of
+/// the jar itself, its declaration, and the six `compatibility` values.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Inspection {
-    pub name: String,
-    /// The Modrinth version number; `None` unless the source is Modrinth.
-    pub version: Option<String>,
-    pub source: String,
-    pub file_name: String,
-    pub sha256: String,
-    /// The absolute path of the jar in the cache directory.
-    pub path: PathBuf,
+    pub file: CachedFile,
     pub declaration: Declaration,
-    pub modrinth: Option<ModrinthRecord>,
     pub compatibility: Compatibility,
 }
 
 /// The inspection values of `cached_jar`, whose declaration is `declaration` (insp-2).
-pub fn inspect(cached_jar: &CachedJar, declaration: Declaration) -> Inspection {
+pub fn inspect(cached_jar: &CachedFile, declaration: Declaration) -> Inspection {
     Inspection {
-        name: cached_jar.name.clone(),
-        version: plugin_source::version_number_of(&cached_jar.source).map(str::to_owned),
-        source: cached_jar.source.clone(),
-        file_name: cached_jar.file_name.clone(),
-        sha256: cached_jar.sha256.clone(),
-        path: cached_jar.path.clone(),
+        file: cached_jar.clone(),
         compatibility: compatibility(&declaration, cached_jar.modrinth.as_ref()),
         declaration,
-        modrinth: cached_jar.modrinth.clone(),
     }
 }
 
@@ -371,7 +339,7 @@ fn requires_newer_minecraft(
     let minimum_version =
         MinecraftVersion::parse(minimum).map_err(|source| Error::MinimumMinecraftVersion {
             api_version: minimum.to_owned(),
-            path: inspection.path.clone(),
+            path: inspection.file.path.clone(),
             source,
         })?;
     let server_version =
@@ -438,8 +406,8 @@ mod tests {
         values.iter().map(|value| (*value).to_owned()).collect()
     }
 
-    fn cached_from_url() -> CachedJar {
-        CachedJar {
+    fn cached_from_url() -> CachedFile {
+        CachedFile {
             name: "Example".to_owned(),
             source: "https://example.com/Example.jar".to_owned(),
             file_name: "Example.jar".to_owned(),
@@ -449,8 +417,8 @@ mod tests {
         }
     }
 
-    fn cached_from_modrinth(modrinth: ModrinthRecord) -> CachedJar {
-        CachedJar {
+    fn cached_from_modrinth(modrinth: ModrinthRecord) -> CachedFile {
+        CachedFile {
             name: "LuckPerms".to_owned(),
             source: "modrinth:luckperms:v5.5.71-bukkit".to_owned(),
             file_name: "LuckPerms-Bukkit-5.5.71.jar".to_owned(),
@@ -520,7 +488,8 @@ mod tests {
 
         let message = error.to_string();
         assert!(
-            message.contains("next") && message.contains(&inspection.path.display().to_string()),
+            message.contains("next")
+                && message.contains(&inspection.file.path.display().to_string()),
             "{message}"
         );
     }
@@ -541,53 +510,6 @@ mod tests {
                 .minimum_minecraft_version
                 .as_deref(),
             Some("next")
-        );
-    }
-
-    /// d-compat-5
-    #[test]
-    fn newest_minecraft_version_includes_snapshots_and_skips_unparsable_ones() {
-        assert_eq!(
-            newest_minecraft_version(&strings(&["26.3", "26.4-snapshot-5", "25w46a"])),
-            Some("26.4-snapshot-5")
-        );
-    }
-
-    /// d-compat-6
-    #[test]
-    fn no_parsable_minecraft_version_has_no_newest() {
-        assert_eq!(
-            newest_minecraft_version(&strings(&["25w46a", "b1.7.3"])),
-            None
-        );
-    }
-
-    /// 「検証の値と判定」 方法: of equally new versions the first is the newest.
-    #[test]
-    fn first_of_equally_new_versions_is_the_newest() {
-        assert_eq!(
-            newest_minecraft_version(&strings(&["1.21", "1.21.0"])),
-            Some("1.21")
-        );
-    }
-
-    /// insp-2: `version` is the Modrinth version number.
-    #[test]
-    fn version_is_the_version_number_of_a_modrinth_source() {
-        let inspection = inspect(
-            &cached_from_modrinth(record(&["paper"], &["26.3"], &[])),
-            declaration_named("LuckPerms"),
-        );
-
-        assert_eq!(inspection.version.as_deref(), Some("v5.5.71-bukkit"));
-    }
-
-    /// insp-2: `version` is absent unless the source is Modrinth.
-    #[test]
-    fn version_is_absent_for_a_url_source() {
-        assert_eq!(
-            inspect(&cached_from_url(), Declaration::default()).version,
-            None
         );
     }
 
@@ -733,7 +655,7 @@ mod tests {
         );
     }
 
-    /// 「検証の値と判定」 方法: lists contain a value only as the whole string.
+    /// 「プラグインの検証の値と判定」 方法: lists contain a value only as the whole string.
     #[test]
     fn minecraft_version_is_compared_as_a_whole_string() {
         assert_eq!(
@@ -846,7 +768,7 @@ mod tests {
         assert_eq!(judgement.conflict, ["Example-old.jar"]);
     }
 
-    /// 「検証の値と判定」 方法 4: without a declared name there is no `conflict`.
+    /// 「プラグインの検証の値と判定」 方法 4: without a declared name there is no `conflict`.
     #[test]
     fn jar_without_a_name_has_no_conflict() {
         let inspection = inspect(&cached_from_url(), Declaration::default());

@@ -1,7 +1,11 @@
 pub mod creation;
+pub mod datapacks;
 mod initial_launch;
 pub mod mism_toml;
+pub mod placed_files;
 pub mod plugins;
+pub mod server_jar;
+mod server_properties;
 
 use std::env;
 use std::io;
@@ -10,7 +14,6 @@ use std::path::{Path, PathBuf};
 use mism_toml::MismToml;
 
 const MISM_TOML_FILE_NAME: &str = "mism.toml";
-const PLUGINS_DIRECTORY_NAME: &str = "plugins";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -38,7 +41,7 @@ pub struct ServerDirectory {
 
 impl ServerDirectory {
     /// The current directory as the target server, or `None` when it has no `mism.toml`
-    /// (plg-1, plg-2).
+    /// (plg-1, plg-2, dp-1, dp-2).
     pub fn current() -> Result<Option<ServerDirectory>, Error> {
         ServerDirectory::at(env::current_dir().map_err(Error::CurrentDirectory)?)
     }
@@ -53,10 +56,6 @@ impl ServerDirectory {
 
     pub fn mism_toml_path(&self) -> PathBuf {
         mism_toml_path(&self.path)
-    }
-
-    pub fn plugins_path(&self) -> PathBuf {
-        self.path.join(PLUGINS_DIRECTORY_NAME)
     }
 }
 
@@ -109,7 +108,8 @@ mod tests {
         );
     }
 
-    /// 「mism plugin の対象のサーバーと共通の手順」 方法 1: an invalid `mism.toml` is an error.
+    /// 「mism plugin と mism datapack の対象のサーバーと共通の手順」 方法 1: an invalid `mism.toml`
+    /// is an error.
     #[test]
     fn invalid_mism_toml_is_an_error() {
         let directory = temporary_directory();

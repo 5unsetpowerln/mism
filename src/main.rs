@@ -1,8 +1,11 @@
 mod atomic_fs;
 mod cache_directory;
 mod command_line;
-mod compatibility;
 mod content_hash;
+mod datapack_compatibility;
+mod datapack_zip;
+mod fetch_source;
+mod fetched_file_cache;
 mod file_name;
 mod folia;
 mod http_client;
@@ -10,12 +13,12 @@ mod interruption;
 mod jar_cache;
 mod minecraft_version;
 mod modrinth_api;
+mod modrinth_source;
 mod output;
 mod papermc;
 mod papermc_api;
-mod plugin_cache;
+mod plugin_compatibility;
 mod plugin_jar;
-mod plugin_source;
 mod prompt;
 mod server_directory;
 mod subcommands;
@@ -36,6 +39,8 @@ enum Error {
     Versions(#[from] subcommands::versions::Error),
     #[error(transparent)]
     Plugin(#[from] subcommands::plugin::Error),
+    #[error(transparent)]
+    Datapack(#[from] subcommands::datapack::Error),
 }
 
 impl Error {
@@ -45,6 +50,7 @@ impl Error {
             Error::New(error) => error.hint(),
             Error::Versions(error) => error.hint(),
             Error::Plugin(error) => error.hint(),
+            Error::Datapack(error) => error.hint(),
         }
     }
 
@@ -54,6 +60,7 @@ impl Error {
             Error::New(error) => error.interrupted_by(),
             Error::Versions(error) => error.interrupted_by(),
             Error::Plugin(error) => error.interrupted_by(),
+            Error::Datapack(error) => error.interrupted_by(),
         }
     }
 }
@@ -71,6 +78,7 @@ fn run(command_line: CommandLine) -> Result<(), Error> {
         Subcommand::New(arguments) => subcommands::new::run(&arguments)?,
         Subcommand::Versions(arguments) => subcommands::versions::run(&arguments)?,
         Subcommand::Plugin(arguments) => subcommands::plugin::run(&arguments)?,
+        Subcommand::Datapack(arguments) => subcommands::datapack::run(&arguments)?,
     }
     Ok(())
 }
