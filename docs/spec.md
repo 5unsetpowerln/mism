@@ -139,11 +139,12 @@ mism は、プラグインがサーバーで動くかを保証しない。mism �
 
 ### バージョンの列挙 (versions)
 
-- vers-1. 利用者が `mism plugin versions modrinth:<識別子>` を実行したとき、mism は、そのプラグインの Modrinth のバージョンを、公開日時が新しい順に、出力の規則に従って 1 つずつ改行で区切って標準出力に出力し、終了ステータス 0 で終了する。
+- vers-1. 利用者が `mism plugin versions modrinth:<識別子>` を実行したとき、mism は、値の名前の記述 (vers-6)を出力し、その後に、そのプラグインの Modrinth のバージョンを、公開日時が新しい順に、出力の規則に従って 1 つずつ改行で区切って標準出力に出力し、終了ステータス 0 で終了する。
 - vers-2. vers-1 で mism が出力する各バージョンの記述は、バージョンの番号、リリースの種別 (`release`、`beta`、`alpha` のいずれか)、そのバージョンに対応すると Modrinth が申告しているサーバーソフトウェアの一覧、そのバージョンに対応すると Modrinth が申告している Minecraft のバージョンのうち最も新しいもの、必須と Modrinth が申告している依存先の識別子 (plg-3 の識別子)の一覧をこの順に並べたものである。
 - vers-3. 対象のサーバーがあるとき (plg-2)、mism は、vers-2 の記述の末尾に、そのバージョンを対象のサーバーと照らし合わせた結果を足す。結果は、対応するサーバーソフトウェアの一覧に対象のサーバーのサーバーソフトウェア (Paper なら `paper`、Folia なら `folia`)があり、対応する Minecraft のバージョンの一覧に対象のサーバーの Minecraft のバージョンがあるとき `match`、対応するサーバーソフトウェアの一覧に対象のサーバーのサーバーソフトウェアがあるが、対応する Minecraft のバージョンの一覧に対象のサーバーの Minecraft のバージョンが無いとき `software-only`、対応するサーバーソフトウェアの一覧に対象のサーバーのサーバーソフトウェアが無いとき `mismatch`、対応するサーバーソフトウェアの一覧が分からない (insp-2 の `unknown`)とき `unknown` のいずれかである (e.g. 対象のサーバーが Minecraft のバージョン 26.3 の Paper のとき `v5.5.71-bukkit	release	bukkit,folia,paper,spigot	26.3	-	match`)。
 - vers-4. 利用者が `mism plugin versions` の引数として `modrinth:` に続く識別子以外の文字列を与えたとき、mism は、処理を中止してエラーを報告する。
-- vers-5. mism が Modrinth との通信に失敗したとき、mism は、バージョンの列挙を中止して err-9 と同じ動作をする。
+- vers-5. mism が Modrinth との通信に失敗したとき、mism は、値の名前の記述も Modrinth のバージョンの記述も出力せず、バージョンの列挙を中止して err-9 と同じ動作をする。
+- vers-6. 値の名前の記述は、vers-2 の各値の名前 `version`、`release_type`、`software`、`newest_minecraft_version`、`required_dependencies` をこの順にタブ 1 文字で区切って並べたものであり、対象のサーバーがあるとき (vers-3)は、その末尾にタブ 1 文字と `declared` が続く。そのプラグインの Modrinth のバージョンが 0 個のときも、mism は、値の名前の記述を出力する。
 
 ### キャッシュのディレクトリへの取得 (fetch)
 

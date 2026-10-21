@@ -46,8 +46,8 @@ impl Error {
     }
 }
 
-/// `mism plugin versions` (vers-1 to vers-5). It writes the versions only after every request
-/// succeeded (vers-5).
+/// `mism plugin versions` (vers-1 to vers-6). It writes the names of the values and the versions
+/// only after every request succeeded (vers-5).
 pub fn run(arguments: &PluginVersionsArguments) -> Result<(), Error> {
     let identifier = plugin_source::parse_versions_argument(&arguments.plugin)?;
     let server = super::target_server()?;
@@ -57,6 +57,7 @@ pub fn run(arguments: &PluginVersionsArguments) -> Result<(), Error> {
     let dependencies =
         modrinth_api::required_dependency_identifiers(&api, &versions.iter().collect::<Vec<_>>())?;
     let target = server.as_ref().map(super::target_of);
+    write_names_of_the_values(target.as_ref())?;
     write_versions(&newest_first(&versions, &dependencies), target.as_ref())
 }
 
@@ -72,7 +73,23 @@ fn newest_first<'a>(
     listed
 }
 
-/// Step 7: one record per version (vers-1, vers-2, vers-3, plg-9).
+/// Step 7: the names of the values of a version record, with `declared` at the end when there is a
+/// target server (vers-6, plg-9).
+fn write_names_of_the_values(target: Option<&TargetServer>) -> Result<(), Error> {
+    let names = [
+        "version",
+        "release_type",
+        "software",
+        "newest_minecraft_version",
+        "required_dependencies",
+    ]
+    .into_iter()
+    .chain(target.map(|_| "declared"));
+    let fields: Vec<Field> = names.map(|name| Field::Value(Some(name))).collect();
+    Ok(output::write_to_stdout(&output::record(&fields))?)
+}
+
+/// Step 8: one record per version (vers-1, vers-2, vers-3, plg-9).
 fn write_versions(
     listed: &[(&Version, &BTreeSet<String>)],
     target: Option<&TargetServer>,

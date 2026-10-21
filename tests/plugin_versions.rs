@@ -9,6 +9,9 @@ use common::plugin_server_directory::PluginEnvironment;
 
 const LUCKPERMS: &str = "modrinth:luckperms";
 const BUKKIT_RECORD: &str = "v5.5.71-bukkit\trelease\tbukkit,folia,paper,spigot\t26.3\t-";
+/// The names of the values, which come before the versions (vers-6).
+const NAMES_OF_THE_VALUES: &str =
+    "version\trelease_type\tsoftware\tnewest_minecraft_version\trequired_dependencies";
 
 /// The index of LuckPerms v5.5.71-bukkit in its saved version list.
 fn bukkit_index(versions: &Value) -> usize {
@@ -66,10 +69,19 @@ fn line_of<'a>(stdout: &'a str, version_number: &str) -> Option<&'a str> {
         .map(|line| &line["mism: ".len()..])
 }
 
-/// The version number at the start of each line.
+/// The first line mism wrote, without `mism: `.
+fn first_line(stdout: &str) -> Option<&str> {
+    stdout
+        .lines()
+        .next()
+        .and_then(|line| line.strip_prefix("mism: "))
+}
+
+/// The version number at the start of each line after the names of the values.
 fn version_numbers(stdout: &str) -> Vec<&str> {
     stdout
         .lines()
+        .skip(1)
         .map(|line| line["mism: ".len()..].split('\t').next().unwrap())
         .collect()
 }
@@ -374,6 +386,15 @@ fn failed_request_hints_at_the_network() {
     ));
 }
 
+/// vers-5: a failed request writes no names of the values.
+#[test]
+fn failed_request_writes_no_names_of_the_values() {
+    assert!(!has_line(
+        &list_failing_at_the_version_list().stdout,
+        NAMES_OF_THE_VALUES
+    ));
+}
+
 /// vers-5 (「mism plugin versions の手順」 方法 7): a request that fails after the version list
 /// was received writes no version.
 #[test]
@@ -383,4 +404,31 @@ fn failed_request_for_the_dependencies_writes_no_version() {
     });
 
     assert!(!output.stdout.contains('\t'), "stdout: {}", output.stdout);
+}
+
+/// vers-6: without a target server, the names of the values come first.
+#[test]
+fn names_of_the_values_come_first() {
+    let output = list_luckperms(|_| {});
+
+    assert_eq!(first_line(&output.stdout), Some(NAMES_OF_THE_VALUES));
+}
+
+/// vers-6: with a target server, the names of the values end with `declared`.
+#[test]
+fn names_of_the_values_end_with_declared_on_a_server() {
+    let output = list_luckperms_on("paper", "26.3", |_| {});
+
+    assert_eq!(
+        first_line(&output.stdout),
+        Some(format!("{NAMES_OF_THE_VALUES}\tdeclared").as_str())
+    );
+}
+
+/// vers-6: for a plugin without versions, mism writes the names of the values and nothing else.
+#[test]
+fn names_of_the_values_are_written_for_a_plugin_without_versions() {
+    let output = list_luckperms(|versions| *versions = json!([]));
+
+    assert_eq!(output.stdout, format!("mism: {NAMES_OF_THE_VALUES}\n"));
 }

@@ -1155,7 +1155,7 @@ mism は、記録と `plugins/` の jar ファイルを次のとおり突き合�
 ### 責務
 
 `subcommands/plugin/versions.rs` は、`mism plugin versions` の手順の全体を担う。
-このモジュールは、仕様書の vers-1 から vers-5 を満たす。
+このモジュールは、仕様書の vers-1 から vers-6 を満たす。
 
 ### 方法
 
@@ -1165,9 +1165,14 @@ mism は、記録と `plugins/` の jar ファイルを次のとおり突き合�
 4. mism は、バージョンの一覧のエンドポイントを呼ぶ (vers-1)。
 5. mism は、すべての Modrinth のバージョンの必須の依存先の識別子を決める (vers-2、「Modrinth の API」の節)。
 6. mism は、Modrinth のバージョンを `date_published` の新しい順に並べる。公開日時が同じものは、バージョンの一覧のエンドポイントが返した順のままにする (vers-1)。
-7. mism は、並べた順に、`version_number`、`version_type`、`loaders`、`game_versions` のうち最も新しいもの (「検証の値と判定」の節)、必須の依存先の識別子の一覧を並べ、対象のサーバーがあればその後に照らし合わせた結果 (vers-3)を足した記述を、`output.rs` を通して 1 つずつ改行で区切って書き、終了ステータス 0 で終了する (vers-1、vers-2、vers-3、plg-9、out-1)。
+7. mism は、値の名前の記述 (`version`、`release_type`、`software`、`newest_minecraft_version`、`required_dependencies` を並べ、対象のサーバーがあればその後に `declared` を足したもの)を、`output.rs` を通して書く (vers-6、plg-9、out-1)。
+8. mism は、並べた順に、`version_number`、`version_type`、`loaders`、`game_versions` のうち最も新しいもの (「検証の値と判定」の節)、必須の依存先の識別子の一覧を並べ、対象のサーバーがあればその後に照らし合わせた結果 (vers-3)を足した記述を、`output.rs` を通して 1 つずつ改行で区切って書き、終了ステータス 0 で終了する (vers-1、vers-2、vers-3、plg-9、out-1)。
 
-通信のどれかが失敗したとき、mism は、手順 7 に進まないので標準出力に Modrinth のバージョンの記述を 1 つも書かず、バージョンの列挙を中止してエラーを報告する (vers-5)。
+通信のどれかが失敗したとき、mism は、手順 7 に進まないので標準出力に値の名前の記述も Modrinth のバージョンの記述も書かず、バージョンの列挙を中止してエラーを報告する (vers-5)。
+
+### 判断
+
+- 値の名前のうち `version`、`release_type`、`software` は、「Modrinth のファイルの選択」の節が問いとエラーで使う属性の名前と同じである。筆者がこの値の名前を `minecraft_version` にせず `newest_minecraft_version` にするのは、その値が対応する Minecraft のバージョンの一覧ではなく、その中で最も新しいもの 1 つだからである。`declared` は、検証の判定 (insp-3)が同じ照らし合わせの結果に付けている名前と同じである。
 
 ## mism plugin fetch と取得の手順
 
