@@ -673,7 +673,9 @@ fn output_after_an_answer_on_terminals_follows_on_the_same_line() {
     mism.wait();
 
     assert!(
-        stdout.contains("mism: plugin name (empty for Example): mism: Renamed\t"),
+        stdout.contains(
+            "\x1b[34mmism:\x1b[0m plugin name (empty for Example): \x1b[34mmism:\x1b[0m Renamed\t"
+        ),
         "stdout: {stdout}"
     );
 }

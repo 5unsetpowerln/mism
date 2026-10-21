@@ -22,21 +22,26 @@ impl Error {
     }
 }
 
-/// Writes each line of `text` to stdout after `mism: ` (out-1).
+/// Writes each line of `text` to stdout after `mism: `, with `mism:` in blue when stdout is a
+/// terminal (out-1, out-3).
 pub fn write_to_stdout(text: &str) -> Result<(), Error> {
-    write_and_flush(&prefixed_lines(text))
+    write_and_flush(&prefixed_lines(text, &prefix_on_stdout(BLUE)))
 }
 
 /// Writes each line of `text` as a warning after `mism: warning: `, with `mism:` in yellow when
 /// stdout is a terminal (out-5).
 pub fn write_warning(text: &str) -> Result<(), Error> {
-    write_and_flush(&warning_lines(text, io::stdout().is_terminal()))
+    write_and_flush(&prefixed_lines(
+        text,
+        &warning_prefix(&prefix_on_stdout(YELLOW)),
+    ))
 }
 
 /// Writes the question that precedes reading an answer from stdin: each line after `mism: `, and
-/// no newline after the last one, so that the user types the answer right after it.
+/// no newline after the last one, so that the user types the answer right after it. `mism:` is
+/// blue when stdout is a terminal (out-3).
 pub fn write_prompt(question: &str) -> Result<(), Error> {
-    write_and_flush(&prefixed_prompt(question))
+    write_and_flush(&prefixed_prompt(question, &prefix_on_stdout(BLUE)))
 }
 
 /// Ends the line of a question after its answer was read, for when no terminal showed the
@@ -96,7 +101,10 @@ fn field_text(field: &Field) -> String {
 pub fn write_external_output_start(program: &str) -> Result<(), Error> {
     write_and_flush(&format!(
         "{}\n",
-        marker_line(&format!("output of {program} follows"))
+        prefixed_lines(
+            &format!("output of {program} follows"),
+            &prefix_on_stdout(BLUE)
+        )
     ))
 }
 
@@ -105,44 +113,44 @@ pub fn write_external_output_start(program: &str) -> Result<(), Error> {
 pub fn write_external_output_end(program: &str) -> Result<(), Error> {
     write_and_flush(&format!(
         "\n{}",
-        marker_line(&format!("output of {program} ended"))
+        prefixed_lines(
+            &format!("output of {program} ended"),
+            &prefix_on_stdout(BLUE)
+        )
     ))
 }
 
-/// `text` after `mism: ` as one line, with `mism` in blue when stdout is a terminal (out-3).
-fn marker_line(text: &str) -> String {
-    if io::stdout().is_terminal() {
-        format!("{BLUE}{PROGRAM_NAME}{RESET}: {text}\n")
+/// `mism:`, in `color` when stdout is a terminal (out-3, out-5).
+fn prefix_on_stdout(color: &str) -> String {
+    prefix(color, io::stdout().is_terminal())
+}
+
+/// `mism:`, in `color` when `colored`.
+fn prefix(color: &str, colored: bool) -> String {
+    if colored {
+        format!("{color}{PROGRAM_NAME}:{RESET}")
     } else {
-        format!("{PROGRAM_NAME}: {text}\n")
+        format!("{PROGRAM_NAME}:")
     }
 }
 
-/// Each line of `text` after `mism: warning: `, `mism:` in yellow when `colored`, each ending with
-/// a newline.
-fn warning_lines(text: &str, colored: bool) -> String {
-    let prefix = if colored {
-        format!("{YELLOW}{PROGRAM_NAME}:{RESET}")
-    } else {
-        format!("{PROGRAM_NAME}:")
-    };
+/// `prefix` followed by ` warning:` (out-5).
+fn warning_prefix(prefix: &str) -> String {
+    format!("{prefix} warning:")
+}
+
+/// Each line of `text` after `prefix` and a space, each ending with a newline.
+fn prefixed_lines(text: &str, prefix: &str) -> String {
     text.lines()
-        .map(|line| format!("{prefix} warning: {line}\n"))
+        .map(|line| format!("{prefix} {line}\n"))
         .collect()
 }
 
-/// Each line of `text` after `mism: `, each ending with a newline.
-fn prefixed_lines(text: &str) -> String {
-    text.lines()
-        .map(|line| format!("{PROGRAM_NAME}: {line}\n"))
-        .collect()
-}
-
-/// Each line of `question` after `mism: `, the last one without a newline.
-fn prefixed_prompt(question: &str) -> String {
+/// Each line of `question` after `prefix` and a space, the last one without a newline.
+fn prefixed_prompt(question: &str, prefix: &str) -> String {
     question
         .split('\n')
-        .map(|line| format!("{PROGRAM_NAME}: {line}"))
+        .map(|line| format!("{prefix} {line}"))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -166,7 +174,10 @@ mod tests {
     #[test]
     fn every_line_of_a_text_gets_the_prefix() {
         assert_eq!(
-            prefixed_lines("`java -version` failed:\nError: no JVM"),
+            prefixed_lines(
+                "`java -version` failed:\nError: no JVM",
+                &prefix(BLUE, false)
+            ),
             "mism: `java -version` failed:\nmism: Error: no JVM\n"
         );
     }
@@ -175,7 +186,7 @@ mod tests {
     #[test]
     fn every_line_of_a_warning_gets_the_warning_prefix() {
         assert_eq!(
-            warning_lines("first\nsecond", false),
+            prefixed_lines("first\nsecond", &warning_prefix(&prefix(YELLOW, false))),
             "mism: warning: first\nmism: warning: second\n"
         );
     }
@@ -184,8 +195,17 @@ mod tests {
     #[test]
     fn colored_warning_has_a_yellow_mism() {
         assert_eq!(
-            warning_lines("first", true),
+            prefixed_lines("first", &warning_prefix(&prefix(YELLOW, true))),
             "\x1b[33mmism:\x1b[0m warning: first\n"
+        );
+    }
+
+    /// out-3: on a terminal, only `mism:` of a line is blue.
+    #[test]
+    fn colored_line_has_a_blue_mism() {
+        assert_eq!(
+            prefixed_lines("first", &prefix(BLUE, true)),
+            "\x1b[34mmism:\x1b[0m first\n"
         );
     }
 
@@ -194,7 +214,10 @@ mod tests {
     #[test]
     fn question_gets_the_prefix_and_no_final_newline() {
         assert_eq!(
-            prefixed_prompt("modrinth:a has files with these values of version:\n2.0\nversion: "),
+            prefixed_prompt(
+                "modrinth:a has files with these values of version:\n2.0\nversion: ",
+                &prefix(BLUE, false)
+            ),
             "mism: modrinth:a has files with these values of version:\nmism: 2.0\nmism: version: "
         );
     }

@@ -13,8 +13,8 @@ use common::temporary_directory;
 use common::test_datapack_zip::datapack_declaring;
 
 const JAR_NAME: &str = "paper-26.3-206.jar";
-/// `mism` in SGR 34 (blue), followed by SGR 0 (reset).
-const BLUE_MISM: &str = "\x1b[34mmism\x1b[0m";
+/// `mism:` in SGR 34 (blue), followed by SGR 0 (reset).
+const BLUE_MISM: &str = "\x1b[34mmism:\x1b[0m";
 /// `mism:` in SGR 33 (yellow), followed by SGR 0 (reset).
 const YELLOW_MISM: &str = "\x1b[33mmism:\x1b[0m";
 /// The warning of dinsp-6 for a datapack of the format 48 on a server of the format 121.0, after
@@ -131,8 +131,8 @@ fn server_output_comes_between_the_start_line_and_the_end_line() {
     );
 }
 
-/// out-3: stdout on a terminal. Only the leading `mism` of the start line and of the end line is
-/// colored, in blue.
+/// out-3: stdout on a terminal. The leading `mism:` of the start line and of the end line is
+/// blue, and the rest of them is not colored.
 #[test]
 fn on_a_terminal_the_leading_mism_of_the_start_and_end_lines_is_blue() {
     let stdout = create_paper_server_with_stdout_on_a_terminal();
@@ -144,8 +144,8 @@ fn on_a_terminal_the_leading_mism_of_the_start_and_end_lines_is_blue() {
     assert_eq!(
         lines_of_out_2,
         [
-            format!("{BLUE_MISM}: output of {JAR_NAME} follows"),
-            format!("{BLUE_MISM}: output of {JAR_NAME} ended"),
+            format!("{BLUE_MISM} output of {JAR_NAME} follows"),
+            format!("{BLUE_MISM} output of {JAR_NAME} ended"),
         ]
     );
 }
@@ -243,4 +243,40 @@ fn on_a_pipe_a_warning_has_no_escape_sequence() {
         "stdout: {:?}",
         output.stdout
     );
+}
+
+/// out-3: stdout on a terminal. The result line of `mism new` (new-10) starts with a blue
+/// `mism:`.
+#[test]
+fn on_a_terminal_the_result_line_starts_with_a_blue_mism() {
+    let stdout = create_paper_server_with_stdout_on_a_terminal();
+
+    let last_line = stdout.lines().last().unwrap_or_default();
+    assert!(
+        last_line.starts_with(&format!("{BLUE_MISM} paper 26.3 206 ")),
+        "stdout: {stdout:?}"
+    );
+}
+
+/// out-3: stdout on a terminal. Every line of an inspection but the warning starts with a blue
+/// `mism:`, and the rest of each line is not colored.
+#[test]
+fn on_a_terminal_each_line_but_a_warning_starts_with_a_blue_mism() {
+    let environment = DatapackEnvironment::with_server("paper", "26.3");
+    let terminal = pseudo_terminal::open();
+    let mism = inspect_a_mismatching_datapack(&environment)
+        .stdout(terminal.slave)
+        .spawn();
+    let stdout = pseudo_terminal::read_until_closed(terminal.master);
+    mism.wait();
+
+    let other_lines: Vec<&str> = stdout
+        .lines()
+        .filter(|line| !line.contains(FORMAT_WARNING))
+        .filter(|line| {
+            line.strip_prefix(&format!("{BLUE_MISM} "))
+                .is_none_or(|rest| rest.contains('\x1b'))
+        })
+        .collect();
+    assert_eq!(other_lines, Vec::<&str>::new(), "stdout: {stdout:?}");
 }
