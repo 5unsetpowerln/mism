@@ -602,6 +602,33 @@ fn successful_installation_exits_with_status_0() {
     assert_eq!(output.exit_code, 0, "stdout: {}", output.stdout);
 }
 
+/// dinst-4: the warning of dinsp-6 comes after the inspection and before the question.
+#[test]
+fn warning_precedes_the_question() {
+    let (environment, output, _before) = install_local_example(
+        &datapack_declaring(r#""pack_format": 48"#),
+        |_| {},
+        &[],
+        StdinConnection::Terminal(b"y\n".to_vec()),
+    );
+
+    let judgement = line_index(&output.stdout, "pack_format\tmismatch");
+    let warning = line_index(
+        &output.stdout,
+        "warning: the datapack declares the data pack formats 48 to 48, which do not include \
+         121.0 of the server",
+    );
+    let asked = line_index(&output.stdout, &question(&environment, "Example.zip"));
+    assert!(
+        matches!(
+            (judgement, warning, asked),
+            (Some(judgement), Some(warning), Some(asked)) if judgement < warning && warning < asked
+        ),
+        "stdout: {}",
+        output.stdout
+    );
+}
+
 /// dinst-4: a `pack_format` of `mismatch` does not stop the installation.
 #[test]
 fn pack_format_mismatch_does_not_stop_the_installation() {

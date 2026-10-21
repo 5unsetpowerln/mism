@@ -6,7 +6,7 @@ use common::fake_modrinth::{
 };
 use common::management_environment::{Record, mism_toml_with_records};
 use common::mism_process::Output;
-use common::plugin_output::{described, reported_an_error};
+use common::plugin_output::{described, has_line, reported_an_error};
 use common::stdin_connection::StdinConnection;
 use common::test_datapack_zip::{
     datapack_declaring, datapack_with_pack_mcmeta, not_a_zip_file, pack_version, server_jar,
@@ -21,6 +21,9 @@ const MECHANICS_PATCH_SOURCE: &str =
 /// order.
 const TRUE_ENDING_MINECRAFT_VERSIONS: &str =
     "1.21.2,1.21.3,1.21.4,1.21.5,1.21.6,1.21.7,1.21.8,1.21.9,1.21.10,1.21.11,26.1,26.1.1,26.1.2";
+/// The warning of dinsp-6 that Modrinth does not list Minecraft 26.3, without `mism: `.
+const DECLARED_26_3_WARNING: &str =
+    "warning: Modrinth does not list Minecraft 26.3 for this version of the datapack";
 
 /// A datapack for exactly the datapack format 121, that of the test servers.
 fn example_datapack() -> Vec<u8> {
@@ -569,7 +572,8 @@ fn judgements_follow_the_values_in_order() {
             "\nmism: modrinth.required_dependencies\tstellarity,true-ending\n\
              mism: declared\tmismatch\n\
              mism: pack_format\tmatch\n\
-             mism: missing\tstellarity,true-ending\n"
+             mism: missing\tstellarity,true-ending\n\
+             mism: warning: Modrinth does not list Minecraft 26.3 for this version of the datapack\n"
         ),
         "stdout: {}",
         output.stdout
@@ -684,4 +688,92 @@ fn server_jar_of_another_minecraft_version_is_an_error() {
     let output = inspect_local(&environment, &example_datapack());
 
     assert!(reported_an_error(&output), "stdout: {}", output.stdout);
+}
+
+/// dinsp-6: when `declared` is `mismatch`, mism warns that Modrinth does not list the server's
+/// Minecraft version.
+#[test]
+fn declared_mismatch_is_warned() {
+    let output = inspect_true_ending(&DatapackEnvironment::with_server("paper", "26.3"));
+
+    assert!(
+        has_line(&output.stdout, DECLARED_26_3_WARNING),
+        "stdout: {}",
+        output.stdout
+    );
+}
+
+/// dinsp-6: when `pack_format` is `mismatch`, mism warns that the declared formats do not
+/// include the server's.
+#[test]
+fn pack_format_mismatch_is_warned() {
+    let output = inspect_on_the_server(r#""pack_format": 48"#);
+
+    assert!(
+        has_line(
+            &output.stdout,
+            "warning: the datapack declares the data pack formats 48 to 48, which do not include \
+             121.0 of the server"
+        ),
+        "stdout: {}",
+        output.stdout
+    );
+}
+
+/// dinsp-6: when both are `mismatch`, the warning on `declared` precedes the one on
+/// `pack_format`, after the judgements.
+#[test]
+fn both_mismatches_are_warned_in_order_after_the_judgements() {
+    let environment = DatapackEnvironment::with_server_without_jar("paper", "26.3");
+    environment.put_server_jar(
+        "paper",
+        "26.3",
+        &server_jar(&version_json("26.3", &pack_version(10000, 0))),
+    );
+
+    let output = inspect_true_ending(&environment);
+
+    assert!(
+        output.stdout.ends_with(&format!(
+            "mism: declared\tmismatch\n\
+             mism: pack_format\tmismatch\n\
+             mism: {DECLARED_26_3_WARNING}\n\
+             mism: warning: the datapack declares the data pack formats 71 to 9999, which do \
+             not include 10000.0 of the server\n"
+        )),
+        "stdout: {}",
+        output.stdout
+    );
+}
+
+/// dinsp-6: without a `mismatch`, mism writes no warning.
+#[test]
+fn matching_datapack_is_not_warned() {
+    let output = inspect_true_ending(&DatapackEnvironment::with_server("paper", "26.1.2"));
+
+    assert!(
+        !output.stdout.contains("mism: warning: "),
+        "stdout: {}",
+        output.stdout
+    );
+}
+
+/// dinsp-6: `unknown` judgements are not warned about.
+#[test]
+fn unknown_judgements_are_not_warned() {
+    let output = inspect_on_the_server("");
+
+    assert!(
+        !output.stdout.contains("mism: warning: "),
+        "stdout: {}",
+        output.stdout
+    );
+}
+
+/// dinsp-6: an inspection that warns still exits with status 0.
+#[test]
+fn warned_inspection_exits_with_status_0() {
+    let output = inspect_true_ending(&DatapackEnvironment::with_server("paper", "26.3"));
+
+    assert_eq!(output.exit_code, 0, "stdout: {}", output.stdout);
 }

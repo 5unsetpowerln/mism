@@ -241,8 +241,8 @@ mism は、中断による終了の終了ステータスを、`SIGINT` のとき
 
 ### 責務
 
-`output.rs` は、mism 自身が標準出力に書く文字列の各行の先頭に `mism: ` を付けること、外部のソフトウェアの出力の始まりと終わりを伝える文字列、標準出力が端末のときの色を担う。mism 自身は、標準エラー出力に何も書かない (out-4)。
-このモジュールは、仕様書の out-1 から out-3、plg-9、dp-12 を満たし、new-10、ver-1、err-9 の出力の形を決める。
+`output.rs` は、mism 自身が標準出力に書く文字列の各行の先頭に `mism: ` を付けること、外部のソフトウェアの出力の始まりと終わりを伝える文字列、警告の文字列、標準出力が端末のときの色を担う。mism 自身は、標準エラー出力に何も書かない (out-4)。
+このモジュールは、仕様書の out-1 から out-3、out-5、plg-9、dp-12 を満たし、new-10、ver-1、err-9 の出力の形を決める。
 
 ### 方法
 
@@ -257,13 +257,15 @@ mism は、mism 自身が書く文字列の各行の先頭に `mism: ` を付け
 
 mism は、標準出力が端末 (`isatty`)であるときだけ、サーバーの出力の始まりと終わりを伝える 2 つの文字列の先頭の `mism` を、ANSI の SGR の前景色の青 (パラメーター 34。`ESC[34m` から `ESC[0m` まで)で書く (out-3)。
 その青の実際の色合いは、端末のテーマが決める。
+警告の文字列は、警告の本文の各行の先頭に `mism: warning: ` を付けたものである (out-5)。mism は、標準出力が端末であるときだけ、警告の各行の先頭の `mism:` を、ANSI の SGR の前景色の黄 (パラメーター 33。`ESC[33m` から `ESC[0m` まで)で書く (out-5)。`subcommands/` のモジュールは、警告を、このモジュールの警告を書く処理を通して書く。
 mism は、それ以外の出力には色を付けず、標準出力が端末でないときはエスケープシーケンスを一切書かない。
 mism は、標準出力に書くたびに、書いた内容をフラッシュする。サーバーが mism と同じ標準出力に書くので、フラッシュしなければ mism の文字列とサーバーの出力の順序が保たれないからである。
 
 ### 判断
 
 - 筆者が青を RGB ではなく ANSI の SGR のパラメーター 34 で指定するのは、リポジトリの所有者が、色を固定せず端末のテーマに任せると決めたからである。
-- 筆者が色をサーバーの出力の始まりと終わりを伝える 2 つの文字列だけに付けるのは、仕様書の out-3 がその 2 つの文字列だけを定めているからである。
+- 筆者が色を、サーバーの出力の始まりと終わりを伝える 2 つの文字列の先頭の `mism` と、警告の各行の先頭の `mism:` だけに付けるのは、仕様書の out-3 と out-5 がそれだけを定めているからである。筆者が黄を RGB ではなく SGR のパラメーター 33 で指定するのは、青 (out-3)と同じく、色合いを端末のテーマに任せるためである。
+- 警告の各行が `warning: ` を持つのは、標準出力が端末でなく mism が色を付けないときにも、利用者が、警告の行を、mism が標準出力に書くほかの文字列と見分けられるようにするためである (out-5)。
 - 筆者が始まりと終わりを伝える文字列を `initial_launch.rs` に書かせるのは、jar ファイルの名前と、サーバーのプロセスの起動と終了の時点を、そのモジュールだけが持つからである。
 - 筆者が `mism new` の結果の文字列 (new-10)と Minecraft のバージョンの一覧の各文字列 (ver-1)にも `mism: ` を付けるのは、リポジトリの所有者が、機械向けの出力は将来のオプション (`--json`)で分け、それ以外の出力をすべて人向けにすると決めたからである。
 
@@ -1174,7 +1176,9 @@ mism は、対象のサーバーがあるとき、データパックの検証の
 2. `pack_format` の値は、対象のサーバーのデータパックの形式の番号 (「サーバーのデータパックの形式の番号」の節)が、宣言の下限と上限の間 (両端を含む)にあるとき `match`、無いとき `mismatch`、宣言が形式の番号を示さないとき `unknown` である。mism は、`pack_format` を常に出力する。mism は、形式の番号を、メジャー番号、マイナー番号の順に整数として比べる。mism は、整数で書かれた下限を、そのメジャー番号とマイナー番号 0 の組とみなし、整数で書かれた上限を、そのメジャー番号のすべてのマイナー番号を含むものとみなす (dinsp-2)。
 3. `missing` の依存先は、`modrinth.required_dependencies` の要素のうち、`mism.toml` のプラグインの記録とデータパックの記録のどの取得元の指定の識別子 (「取得元の指定」の節)とも一致しないものである。そのような依存先があれば、mism は、`missing` を、その依存先の一覧とともに出力する。
 
-mism は、データパックの検証の判定の記述を、`declared`、`pack_format`、`missing` の順に、出力する条件が成り立つ判定につき 1 つずつ、改行で区切って書く (dinsp-3)。データパックの検証の判定には、配置を止める判定 (プラグインの `incompatible` と `conflict` に当たるもの)が無い。
+mism は、データパックの検証の判定の記述を、`declared`、`pack_format`、`missing` の順に、出力する条件が成り立つ判定につき 1 つずつ、改行で区切って書く (dinsp-3)。
+
+mism は、判定の記述の後に、`declared` の値が `mismatch` であれば `mism: warning: Modrinth does not list Minecraft <対象のサーバーの Minecraft のバージョン> for this version of the datapack` という警告を、`pack_format` の値が `mismatch` であれば `mism: warning: the datapack declares the data pack formats <下限> to <上限>, which do not include <対象のサーバーのデータパックの形式の番号> of the server` という警告を、この順に、`output.rs` の警告として書く (dinsp-6、out-5)。<下限> と <上限> は、dinsp-2 の `declaration.min_format` と `declaration.max_format` と同じ形であり、<対象のサーバーのデータパックの形式の番号> は、`<メジャー番号>.<マイナー番号>` の形 (e.g. `121.0`)である。データパックの検証の判定には、配置を止める判定 (プラグインの `incompatible` と `conflict` に当たるもの)が無い。
 
 mism は、`mism datapack versions` の照らし合わせ (dvers-3)を、`declared` と同じ方法で、その Modrinth のバージョンの `game_versions` について行う。
 
@@ -1470,7 +1474,7 @@ mism は、この番号を、`mism datapack inspect`、`mism datapack place`、`
 3. 見つからなければ、mism は、取得の手順を行う (insp-1、dinsp-1)。
 4. mism は、ファイルの宣言を読む (insp-1、dinsp-1)。プラグインでは、mism は、`plugin_jar.rs` で jar ファイルの宣言を読み、宣言を持たなければ、処理を中止してエラーを報告する (insp-4)。データパックでは、mism は、`datapack_zip.rs` で `pack.mcmeta` を読み、dinsp-4 の条件が成り立てば、処理を中止してエラーを報告する (dinsp-4)。対象のサーバーがあれば、mism は、この手順で `server_directory/server_jar.rs` で対象のサーバーのデータパックの形式の番号も読み、読めなければ、処理を中止してエラーを報告する (dinsp-5)。
 5. mism は、プラグインでは `plugin_compatibility.rs` で、データパックでは `datapack_compatibility.rs` で検証の記述の値 (プラグインでは 13 個、データパックでは 9 個)を作り、その記述を改行で区切って書く (insp-2、dinsp-2)。
-6. 対象のサーバーがあれば、mism は、検証の判定を作り、出力する条件が成り立つ判定の記述を書く (insp-3、dinsp-3)。プラグインでは、mism は、`server_directory/plugins.rs` で `plugins/` の直下の jar ファイルの宣言を読み、`mism.toml` の記録を読む。データパックでは、mism は、手順 4 で読んだ対象のサーバーのデータパックの形式の番号と、`mism.toml` の記録を使う。
+6. 対象のサーバーがあれば、mism は、検証の判定を作り、出力する条件が成り立つ判定の記述を書く (insp-3、dinsp-3)。データパックでは、mism は、その後に dinsp-6 の警告を書く (dinsp-6)。プラグインでは、mism は、`server_directory/plugins.rs` で `plugins/` の直下の jar ファイルの宣言を読み、`mism.toml` の記録を読む。データパックでは、mism は、手順 4 で読んだ対象のサーバーのデータパックの形式の番号と、`mism.toml` の記録を使う。
 7. mism は、終了ステータス 0 で終了する (insp-1、dinsp-1)。
 
 手順 4 から手順 6 が、`place` と `install` が使う検証の手順である。
@@ -1490,7 +1494,7 @@ mism は、この番号を、`mism datapack inspect`、`mism datapack place`、`
 
 1. mism は、対象のサーバーを決める (plg-1、dp-1)。データパックでは、mism は、置くディレクトリ (ワールドのディレクトリの `datapacks/`)も決める (dp-3、「プラグインとデータパックを置くディレクトリ」の節)。
 2. mism は、<取得元の指定> を解析し (plg-3、dp-4)、キャッシュのディレクトリからその取得元の指定のファイルを探す (place-1、dplace-1)。見つからなければ、mism は、処理を中止してエラーを報告する (place-1、dplace-1)。mism は、この手順でも以降の手順でも、通信しない (place-1、dplace-1)。
-3. mism は、検証の手順を行う (place-6、dplace-6)。プラグインの宣言が無ければ、mism は、insp-4 のとおりエラーを報告する (place-6)。プラグインの検証の判定に `incompatible` か `conflict` が 1 つでもあれば、mism は、検証の記述を書いた後に処理を中止し、そのどちらがあったかを伝えるエラーを報告する (place-6)。dinsp-4 か dinsp-5 の条件が成り立てば、mism は、検証の記述を書かずにエラーを報告する (dplace-6)。データパックの検証の判定は、配置を止めない (「データパックの検証の値と判定」の節)。
+3. mism は、検証の手順を行う (place-6、dplace-6)。プラグインの宣言が無ければ、mism は、insp-4 のとおりエラーを報告する (place-6)。プラグインの検証の判定に `incompatible` か `conflict` が 1 つでもあれば、mism は、検証の記述を書いた後に処理を中止し、そのどちらがあったかを伝えるエラーを報告する (place-6)。dinsp-4 か dinsp-5 の条件が成り立てば、mism は、検証の記述を書かずにエラーを報告する (dplace-6)。データパックの検証の判定と dinsp-6 の警告は、配置を止めない (dplace-6、「データパックの検証の値と判定」の節)。
 4. mism は、place-3 と place-4 (または dplace-3 と dplace-4)の条件を確かめる (「プラグインとデータパックを置くディレクトリ」の節)。
 5. mism は、中断のフラグを確認する。
 6. mism は、ファイルを `server_directory/placed_files.rs` の手順で配置する (place-2、dplace-2、plg-8、dp-11)。
@@ -1511,7 +1515,7 @@ mism は、この番号を、`mism datapack inspect`、`mism datapack place`、`
 2. 利用者が `--yes` を付けておらず、標準入力が端末でなければ、mism は、通信せずに処理を中止し、`--yes` を付けるよう案内するエラーを報告する (inst-7、dinst-7)。
 3. mism は、<取得元の指定> を解析する (plg-3、dp-4)。`modrinth:` の取得元の指定が属性の値を 1 つも持たないときだけ、mism は `--lazy` を使い、それ以外のとき (URL、手元のファイル、値を持つ `modrinth:` の取得元の指定)、mism は `--lazy` を無視する (inst-2、inst-3、dinst-2、dinst-3)。
 4. mism は、取得の手順を行う (inst-1、inst-2、inst-4、dinst-1、dinst-2、dinst-4)。
-5. mism は、検証の手順を行う (inst-4、dinst-4)。プラグインの宣言が無いとき、または dinsp-4 か dinsp-5 の条件が成り立つとき、mism は、検証の記述を書かずに処理を中止してエラーを報告する (insp-4、dinsp-4、dinsp-5)。プラグインの検証の判定に `incompatible` か `conflict` が 1 つでもあれば、mism は、検証の記述を書いた後に処理を中止してエラーを報告する (inst-4)。
+5. mism は、検証の手順を行う (inst-4、dinst-4)。プラグインの宣言が無いとき、または dinsp-4 か dinsp-5 の条件が成り立つとき、mism は、検証の記述を書かずに処理を中止してエラーを報告する (insp-4、dinsp-4、dinsp-5)。プラグインの検証の判定に `incompatible` か `conflict` が 1 つでもあれば、mism は、検証の記述を書いた後に処理を中止してエラーを報告する (inst-4)。データパックの検証の判定と dinsp-6 の警告は、インストールを止めない (dinst-4)。
 6. mism は、place-3 と place-4 (または dplace-3 と dplace-4)の条件を確かめる (inst-4、dinst-4)。
 7. 利用者が `--yes` を付けていれば、mism は、尋ねずに手順 8 に進む (inst-6、dinst-6)。付けていなければ、mism は、プラグインでは `mism: place <ファイルの名前> in plugins/? (y/n): `、データパックでは `mism: place <ファイルの名前> in <ワールドのディレクトリ>/datapacks/? (y/n): ` という問いを書き、標準入力から改行までの回答を 1 つ読む (inst-5、dinst-5)。回答が `y` か `yes` であれば、mism は、手順 8 に進む (inst-5、dinst-5)。それ以外であれば、mism は、`mism: not placing <ファイルの名前>` という文字列を書き、置くディレクトリと `mism.toml` を変えずに終了ステータス 0 で終了する (inst-5、dinst-5)。
 8. mism は、配置の手順を行う (inst-4、dinst-4、place-2、place-5、dplace-2、dplace-5、plg-7、dp-10)。

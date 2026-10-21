@@ -2,6 +2,7 @@ mod common;
 
 use std::ffi::OsString;
 
+use common::datapack_server_directory::DatapackEnvironment;
 use common::fake_java::{self, Behavior};
 use common::fake_papermc::{self, FakePaperMc};
 use common::mism_process::{MismProcess, Output};
@@ -9,10 +10,17 @@ use common::new_server_environment::NewServerEnvironment;
 use common::pseudo_terminal;
 use common::server_output::{end_line, start_line};
 use common::temporary_directory;
+use common::test_datapack_zip::datapack_declaring;
 
 const JAR_NAME: &str = "paper-26.3-206.jar";
 /// `mism` in SGR 34 (blue), followed by SGR 0 (reset).
 const BLUE_MISM: &str = "\x1b[34mmism\x1b[0m";
+/// `mism:` in SGR 33 (yellow), followed by SGR 0 (reset).
+const YELLOW_MISM: &str = "\x1b[33mmism:\x1b[0m";
+/// The warning of dinsp-6 for a datapack of the format 48 on a server of the format 121.0, after
+/// `mism: ` or the yellow `mism:`.
+const FORMAT_WARNING: &str = "warning: the datapack declares the data pack formats 48 to 48, which do not include 121.0 of \
+     the server";
 
 fn paper_arguments(environment: &NewServerEnvironment) -> [OsString; 2] {
     [
@@ -179,4 +187,60 @@ fn error_report_writes_nothing_to_stderr() {
     let output = list_paper_versions(&fake_papermc::unreachable_base_url());
 
     assert_eq!(output.stderr, "");
+}
+
+/// `mism datapack inspect` of a local datapack that declares the format 48, on a Paper 26.3
+/// server of the format 121.0, which warns about `pack_format` (dinsp-6).
+fn inspect_a_mismatching_datapack(environment: &DatapackEnvironment) -> MismProcess {
+    let zip =
+        environment.write_local_zip("Example.zip", &datapack_declaring(r#""pack_format": 48"#));
+    environment.mism_datapack(["inspect", zip.to_str().unwrap()])
+}
+
+/// out-5: on a pipe, the warning line starts with `mism: warning: `.
+#[test]
+fn warning_line_starts_with_the_warning_prefix() {
+    let environment = DatapackEnvironment::with_server("paper", "26.3");
+
+    let output = inspect_a_mismatching_datapack(&environment).run();
+
+    let warnings: Vec<&str> = output
+        .stdout
+        .lines()
+        .filter(|line| line.contains(FORMAT_WARNING))
+        .collect();
+    assert_eq!(warnings, [format!("mism: {FORMAT_WARNING}")]);
+}
+
+/// out-5: stdout on a terminal. Only the leading `mism:` of the warning line is colored, in
+/// yellow.
+#[test]
+fn on_a_terminal_the_leading_mism_of_a_warning_is_yellow() {
+    let environment = DatapackEnvironment::with_server("paper", "26.3");
+    let terminal = pseudo_terminal::open();
+    let mism = inspect_a_mismatching_datapack(&environment)
+        .stdout(terminal.slave)
+        .spawn();
+    let stdout = pseudo_terminal::read_until_closed(terminal.master);
+    mism.wait();
+
+    let warnings: Vec<&str> = stdout
+        .lines()
+        .filter(|line| line.contains(FORMAT_WARNING))
+        .collect();
+    assert_eq!(warnings, [format!("{YELLOW_MISM} {FORMAT_WARNING}")]);
+}
+
+/// out-5: stdout that is not a terminal has no escape sequence in a warning either.
+#[test]
+fn on_a_pipe_a_warning_has_no_escape_sequence() {
+    let environment = DatapackEnvironment::with_server("paper", "26.3");
+
+    let output = inspect_a_mismatching_datapack(&environment).run();
+
+    assert!(
+        !output.stdout.contains('\x1b'),
+        "stdout: {:?}",
+        output.stdout
+    );
 }

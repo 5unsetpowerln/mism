@@ -455,6 +455,28 @@ fn inspection_precedes_the_record() {
     );
 }
 
+/// dplace-6: the warning of dinsp-6 precedes the record of the placed datapack.
+#[test]
+fn warning_precedes_the_record() {
+    let environment = true_ending_fetched("26.3");
+
+    let output = place_true_ending(&environment);
+
+    let warning = line_index(
+        &output.stdout,
+        "warning: Modrinth does not list Minecraft 26.3 for this version of the datapack",
+    );
+    let record = line_index(
+        &output.stdout,
+        &format!("{TRUE_ENDING_NAME}\t1.1.4d\t{TRUE_ENDING_FILE_NAME}"),
+    );
+    assert!(
+        matches!((warning, record), (Some(warning), Some(record)) if warning < record),
+        "stdout: {}",
+        output.stdout
+    );
+}
+
 /// dplace-6: `declared` as `mismatch` does not stop the placement.
 #[test]
 fn declared_mismatch_does_not_stop_the_placement() {
@@ -468,7 +490,7 @@ fn declared_mismatch_does_not_stop_the_placement() {
     );
 }
 
-/// dplace-6 (「検証の値と判定」 方法): `pack_format` as `mismatch` does not stop the placement.
+/// dplace-6 (「データパックの検証の値と判定」 方法): `pack_format` as `mismatch` does not stop the placement.
 #[test]
 fn pack_format_mismatch_does_not_stop_the_placement() {
     let bytes = datapack_declaring(r#""pack_format": 48"#);

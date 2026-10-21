@@ -185,9 +185,32 @@ fn write_judgement(
         .filter_map(|record| modrinth_source::identifier_of(&record.source))
         .collect();
     let judgement = datapack_compatibility::judge(inspection, target, &record_identifiers);
-    Ok(output::write_to_stdout(
-        &judgement_lines(&judgement).join("\n"),
-    )?)
+    output::write_to_stdout(&judgement_lines(&judgement).join("\n"))?;
+    write_mismatch_warnings(&judgement, inspection, target)
+}
+
+/// After the judgements, one warning for each of `declared` and `pack_format` that is
+/// `mismatch`, in that order (dinsp-6).
+fn write_mismatch_warnings(
+    judgement: &Judgement,
+    inspection: &Inspection,
+    target: &Target,
+) -> Result<(), Error> {
+    if judgement.declared == Agreement::Mismatch {
+        output::write_warning(&format!(
+            "Modrinth does not list Minecraft {} for this version of the datapack",
+            target.minecraft_version
+        ))?;
+    }
+    // `pack_format` is `mismatch` only for declared formats.
+    if let (Agreement::Mismatch, Some(range)) = (judgement.pack_format, &inspection.declaration) {
+        output::write_warning(&format!(
+            "the datapack declares the data pack formats {} to {}, which do not include {}.{} \
+             of the server",
+            range.min, range.max, target.format_major, target.format_minor
+        ))?;
+    }
+    Ok(())
 }
 
 /// `declared` and `pack_format` always, then `missing` when it applies (dinsp-3).

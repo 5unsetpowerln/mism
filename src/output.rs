@@ -3,6 +3,8 @@ use std::io::{self, IsTerminal, Write};
 const PROGRAM_NAME: &str = "mism";
 /// SGR 34, the blue foreground color, whose actual shade the terminal's theme decides.
 const BLUE: &str = "\x1b[34m";
+/// SGR 33, the yellow foreground color, whose actual shade the terminal's theme decides.
+const YELLOW: &str = "\x1b[33m";
 /// SGR 0, which ends the color.
 const RESET: &str = "\x1b[0m";
 
@@ -23,6 +25,12 @@ impl Error {
 /// Writes each line of `text` to stdout after `mism: ` (out-1).
 pub fn write_to_stdout(text: &str) -> Result<(), Error> {
     write_and_flush(&prefixed_lines(text))
+}
+
+/// Writes each line of `text` as a warning after `mism: warning: `, with `mism:` in yellow when
+/// stdout is a terminal (out-5).
+pub fn write_warning(text: &str) -> Result<(), Error> {
+    write_and_flush(&warning_lines(text, io::stdout().is_terminal()))
 }
 
 /// Writes the question that precedes reading an answer from stdin: each line after `mism: `, and
@@ -110,6 +118,19 @@ fn marker_line(text: &str) -> String {
     }
 }
 
+/// Each line of `text` after `mism: warning: `, `mism:` in yellow when `colored`, each ending with
+/// a newline.
+fn warning_lines(text: &str, colored: bool) -> String {
+    let prefix = if colored {
+        format!("{YELLOW}{PROGRAM_NAME}:{RESET}")
+    } else {
+        format!("{PROGRAM_NAME}:")
+    };
+    text.lines()
+        .map(|line| format!("{prefix} warning: {line}\n"))
+        .collect()
+}
+
 /// Each line of `text` after `mism: `, each ending with a newline.
 fn prefixed_lines(text: &str) -> String {
     text.lines()
@@ -147,6 +168,24 @@ mod tests {
         assert_eq!(
             prefixed_lines("`java -version` failed:\nError: no JVM"),
             "mism: `java -version` failed:\nmism: Error: no JVM\n"
+        );
+    }
+
+    /// out-5: each line of a warning gets `mism: warning: `.
+    #[test]
+    fn every_line_of_a_warning_gets_the_warning_prefix() {
+        assert_eq!(
+            warning_lines("first\nsecond", false),
+            "mism: warning: first\nmism: warning: second\n"
+        );
+    }
+
+    /// out-5: on a terminal, only `mism:` of a warning line is yellow.
+    #[test]
+    fn colored_warning_has_a_yellow_mism() {
+        assert_eq!(
+            warning_lines("first", true),
+            "\x1b[33mmism:\x1b[0m warning: first\n"
         );
     }
 
