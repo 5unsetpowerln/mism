@@ -83,7 +83,7 @@ impl HttpPaperMcApi {
 impl PaperMcApi for HttpPaperMcApi {
     fn minecraft_versions(&self, project: &str) -> Result<Vec<response::VersionEntry>, Error> {
         let url = format!("{}/projects/{project}/versions", self.base_url);
-        let list: response::VersionList = self.client.get_json(&url)?;
+        let list: response::VersionList = self.client.get_json(&url, &[])?;
         Ok(list.versions)
     }
 
@@ -97,7 +97,7 @@ impl PaperMcApi for HttpPaperMcApi {
             "{}/projects/{project}/versions/{minecraft_version}/builds/{software_version}",
             self.base_url
         );
-        Ok(self.client.get_json(&url)?)
+        Ok(self.client.get_json(&url, &[])?)
     }
 }
 

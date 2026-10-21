@@ -1,13 +1,19 @@
 use std::ffi::OsString;
+use std::fs::File;
+use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::thread;
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use nix::sys::signal::{Signal, kill};
 use nix::unistd::Pid;
 
+use super::stdin_connection::StdinConnection;
+
 const EXIT_DEADLINE: Duration = Duration::from_secs(30);
+const STDOUT_DEADLINE: Duration = Duration::from_secs(30);
 
 pub struct Output {
     pub stdout: String,
@@ -18,6 +24,7 @@ pub struct Output {
 /// Runs the built `mism` binary with a clean environment.
 pub struct MismProcess {
     command: Command,
+    stdin: StdinConnection,
 }
 
 impl MismProcess {
@@ -25,10 +32,12 @@ impl MismProcess {
         let mut command = Command::new(env!("CARGO_BIN_EXE_mism"));
         command
             .env_clear()
-            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        MismProcess { command }
+        MismProcess {
+            command,
+            stdin: StdinConnection::NeverClosing,
+        }
     }
 
     pub fn arguments<I, S>(mut self, arguments: I) -> MismProcess
@@ -56,22 +65,44 @@ impl MismProcess {
         self
     }
 
+    /// Connects mism's stdin as `stdin` says, instead of a pipe that stays open and empty.
+    pub fn stdin(mut self, stdin: StdinConnection) -> MismProcess {
+        self.stdin = stdin;
+        self
+    }
+
     /// Runs mism to its exit, failing the test if that takes longer than 30 seconds.
     pub fn run(self) -> Output {
         self.spawn().wait()
     }
 
-    /// Starts mism. Its stdin is a pipe that stays open and receives nothing, so mism waiting for
-    /// input would never exit. The command, with the parent's copy of a descriptor given to
-    /// `stdout`, is dropped here.
+    /// Starts mism. Unless `stdin` connected it otherwise, its stdin is a pipe that stays open
+    /// and receives nothing, so mism waiting for input would never exit. The command, with the
+    /// parent's copy of a descriptor given to `stdout` or of a terminal's slave side, is dropped
+    /// here.
     pub fn spawn(mut self) -> RunningMism {
-        let child = self.command.spawn().unwrap();
-        RunningMism { child }
+        let terminal_master = self.stdin.connect(&mut self.command);
+        let mut child = self.command.spawn().unwrap();
+        self.stdin.feed(&mut child);
+        RunningMism {
+            child,
+            _terminal_master: terminal_master,
+            stdout: None,
+        }
     }
 }
 
 pub struct RunningMism {
     child: Child,
+    /// Kept open so that mism's terminal stays open while it runs.
+    _terminal_master: Option<File>,
+    /// What a thread has read from mism's stdout so far, once `wait_for_stdout` started it.
+    stdout: Option<StdoutReader>,
+}
+
+struct StdoutReader {
+    read: Arc<Mutex<Vec<u8>>>,
+    thread: JoinHandle<()>,
 }
 
 impl RunningMism {
@@ -87,6 +118,31 @@ impl RunningMism {
         self.child.wait().unwrap();
     }
 
+    /// Waits until mism's stdout contains `text`, failing the test after 30 seconds. `wait`
+    /// still returns all of stdout.
+    pub fn wait_for_stdout(&mut self, text: &str) {
+        let stdout = self.stdout.get_or_insert_with(|| {
+            let mut pipe = self.child.stdout.take().expect("stdout is a pipe");
+            let read = Arc::new(Mutex::new(Vec::new()));
+            let shared = Arc::clone(&read);
+            let thread = thread::spawn(move || {
+                let mut buffer = [0; 4096];
+                while let Ok(count @ 1..) = pipe.read(&mut buffer) {
+                    shared.lock().unwrap().extend_from_slice(&buffer[..count]);
+                }
+            });
+            StdoutReader { read, thread }
+        });
+        let deadline = Instant::now() + STDOUT_DEADLINE;
+        while !String::from_utf8_lossy(&stdout.read.lock().unwrap()).contains(text) {
+            assert!(
+                Instant::now() < deadline,
+                "stdout did not contain {text:?} within {STDOUT_DEADLINE:?}"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     /// Waits for mism to exit, failing the test if that takes longer than 30 seconds.
     pub fn wait(mut self) -> Output {
         let deadline = Instant::now() + EXIT_DEADLINE;
@@ -98,8 +154,15 @@ impl RunningMism {
             thread::sleep(Duration::from_millis(10));
         }
         let output = self.child.wait_with_output().unwrap();
+        let stdout = match self.stdout {
+            Some(reader) => {
+                reader.thread.join().unwrap();
+                Arc::try_unwrap(reader.read).unwrap().into_inner().unwrap()
+            }
+            None => output.stdout,
+        };
         Output {
-            stdout: String::from_utf8(output.stdout).unwrap(),
+            stdout: String::from_utf8(stdout).unwrap(),
             stderr: String::from_utf8(output.stderr).unwrap(),
             exit_code: output.status.code().expect("mism was killed by a signal"),
         }

@@ -61,6 +61,50 @@ fn versions_help_exits_with_zero() {
     assert_eq!(run(&["versions", "--help"]).exit_code, 0);
 }
 
+/// cli-3: `mism plugin --help` stdout
+#[test]
+fn plugin_help_prints_usage_to_stdout() {
+    assert!(
+        run(&["plugin", "--help"])
+            .stdout
+            .contains("Usage: mism plugin")
+    );
+}
+
+/// cli-3: `mism plugin --help` exit status
+#[test]
+fn plugin_help_exits_with_zero() {
+    assert_eq!(run(&["plugin", "--help"]).exit_code, 0);
+}
+
+/// cli-3: each `mism plugin` subcommand with `--help` prints its usage to stdout
+#[test]
+fn plugin_subcommand_help_prints_its_usage_to_stdout() {
+    let missing: Vec<_> = [
+        "search", "versions", "fetch", "inspect", "place", "install", "list", "remove",
+    ]
+    .into_iter()
+    .filter(|subcommand| {
+        !run(&["plugin", subcommand, "--help"])
+            .stdout
+            .contains(&format!("Usage: mism plugin {subcommand}"))
+    })
+    .collect();
+    assert!(missing.is_empty(), "{missing:?}");
+}
+
+/// cli-3: `mism plugin search --help` exit status
+#[test]
+fn plugin_subcommand_help_exits_with_zero() {
+    assert_eq!(run(&["plugin", "search", "--help"]).exit_code, 0);
+}
+
+/// cli-4: `mism plugin` without a subcommand exits with two
+#[test]
+fn plugin_without_subcommand_exits_with_two() {
+    assert_eq!(run(&["plugin"]).exit_code, 2);
+}
+
 /// cli-4: usage text on stderr
 #[test]
 fn invalid_arguments_print_usage_to_stderr() {

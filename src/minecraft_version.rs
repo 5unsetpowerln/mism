@@ -13,9 +13,10 @@ impl Error {
     }
 }
 
-/// Variant order is the release order: pre-release < release candidate < release.
+/// Variant order is the release order: snapshot < pre-release < release candidate < release.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Suffix {
+    Snapshot(u64),
     PreRelease(u64),
     ReleaseCandidate(u64),
     Release,
@@ -67,6 +68,9 @@ fn parse_number(text: &str) -> Option<u64> {
 }
 
 fn parse_suffix(text: &str) -> Option<Suffix> {
+    if let Some(rest) = text.strip_prefix("snapshot") {
+        return parse_suffix_number(rest).map(Suffix::Snapshot);
+    }
     if let Some(rest) = text.strip_prefix("pre") {
         return parse_suffix_number(rest).map(Suffix::PreRelease);
     }
@@ -161,6 +165,7 @@ mod tests {
             ".26",
             "26..3",
             "26.3-pre",
+            "26.3-snapshot-",
             "26.3-rc-",
             "+1",
             "26.3-pre--1",
@@ -175,11 +180,37 @@ mod tests {
     /// d-ver-5
     #[test]
     fn all_suffix_spellings_parse() {
-        let rejected: Vec<_> = ["1.21.11-pre5", "26.1-pre-1", "1.21.11-rc3", "26.3-rc-3"]
-            .into_iter()
-            .filter(|text| MinecraftVersion::parse(text).is_err())
-            .collect();
+        let rejected: Vec<_> = [
+            "1.21.11-pre5",
+            "26.1-pre-1",
+            "1.21.11-rc3",
+            "26.3-rc-3",
+            "26.4-snapshot-5",
+            "26.4-snapshot5",
+        ]
+        .into_iter()
+        .filter(|text| MinecraftVersion::parse(text).is_err())
+        .collect();
         assert!(rejected.is_empty(), "{rejected:?}");
+    }
+
+    /// d-ver-6
+    #[test]
+    fn snapshot_pre_release_release_candidate_and_release_sort_oldest_first() {
+        let expected = ["26.3-snapshot-10", "26.3-pre-1", "26.3-rc-1", "26.3"];
+        let mut versions: Vec<_> = ["26.3", "26.3-rc-1", "26.3-snapshot-10", "26.3-pre-1"]
+            .into_iter()
+            .map(version)
+            .collect();
+        versions.sort();
+        let sorted: Vec<_> = versions.iter().map(ToString::to_string).collect();
+        assert_eq!(sorted, expected);
+    }
+
+    /// d-ver-7
+    #[test]
+    fn larger_snapshot_number_is_newer() {
+        assert!(version("26.3-snapshot-10") > version("26.3-snapshot-9"));
     }
 
     /// Ordering section: both spellings of the same suffix are equal.

@@ -121,9 +121,14 @@ impl HttpClient {
         }
     }
 
-    pub fn get_json<T: DeserializeOwned>(&self, url: &str) -> Result<T, Error> {
+    /// GETs `url` with the query parameters `query`, each name and value percent-encoded.
+    pub fn get_json<T: DeserializeOwned>(
+        &self,
+        url: &str,
+        query: &[(&str, &str)],
+    ) -> Result<T, Error> {
         let body = self
-            .receive_json_body(url)
+            .receive_json_body(url, query)
             .map_err(|error| self.attribute_to_interruption(error))?;
         serde_json::from_slice(&body).map_err(|source| Error::InvalidJson {
             url: url.to_owned(),
@@ -132,13 +137,13 @@ impl HttpClient {
     }
 
     pub fn download(&self, url: &str, sink: &mut dyn Write) -> Result<(), Error> {
-        let mut response = get_successful_response(&self.download_agent, url)
+        let mut response = get_successful_response(&self.download_agent, url, &[])
             .map_err(|error| self.attribute_to_interruption(error))?;
         self.copy_until_interrupted(url, &mut response.body_mut().as_reader(), sink)
     }
 
-    fn receive_json_body(&self, url: &str) -> Result<Vec<u8>, Error> {
-        let mut response = get_successful_response(&self.json_agent, url)?;
+    fn receive_json_body(&self, url: &str, query: &[(&str, &str)]) -> Result<Vec<u8>, Error> {
+        let mut response = get_successful_response(&self.json_agent, url, query)?;
         response
             .body_mut()
             .read_to_vec()
@@ -220,9 +225,17 @@ fn download_agent(idle_timeout: Duration) -> Agent {
     )
 }
 
-fn get_successful_response(agent: &Agent, url: &str) -> Result<Response<Body>, Error> {
-    let mut response = agent
-        .get(url)
+/// Redirects are followed as ureq does by default, up to 10 times.
+fn get_successful_response(
+    agent: &Agent,
+    url: &str,
+    query: &[(&str, &str)],
+) -> Result<Response<Body>, Error> {
+    let mut response = query
+        .iter()
+        .fold(agent.get(url), |request, (name, value)| {
+            request.query(name, value)
+        })
         .call()
         .map_err(|source| request_failed(url, source))?;
     if response.status() == StatusCode::OK {
@@ -240,18 +253,19 @@ fn unsuccessful_status(url: &str, response: &mut Response<Body>) -> Error {
     }
 }
 
+/// PaperMC explains an error in `message`, Modrinth in `description`.
 #[derive(Deserialize)]
 struct ErrorResponse {
-    message: String,
+    message: Option<String>,
+    description: Option<String>,
 }
 
-/// The `message` field of an error response. It only adds detail to the status, so a body that
+/// The explanation in an error response. It only adds detail to the status, so a body that
 /// cannot be read or is not such JSON gives `None`.
 fn error_message(body: &mut Body) -> Option<String> {
     let bytes = body.read_to_vec().ok()?;
-    serde_json::from_slice::<ErrorResponse>(&bytes)
-        .ok()
-        .map(|response| response.message)
+    let response = serde_json::from_slice::<ErrorResponse>(&bytes).ok()?;
+    response.message.or(response.description)
 }
 
 fn request_failed(url: &str, source: ureq::Error) -> Error {
@@ -419,7 +433,9 @@ mod tests {
     #[test]
     fn request_carries_user_agent() {
         let server = FakeServer::start(vec![immediately(response("200 OK", b"{}"))]);
-        let _: serde_json::Value = client(LONG_IDLE_TIMEOUT).get_json(&server.url).unwrap();
+        let _: serde_json::Value = client(LONG_IDLE_TIMEOUT)
+            .get_json(&server.url, &[])
+            .unwrap();
         assert_eq!(
             header_value(&server.request_head(), "user-agent").as_deref(),
             Some(concat!(
@@ -437,7 +453,7 @@ mod tests {
         let body = br#"{"ok":false,"error":"version_not_found","message":"No version was found with the given identifier."}"#;
         let server = FakeServer::start(vec![immediately(response("404 Not Found", body))]);
         let error = client(LONG_IDLE_TIMEOUT)
-            .get_json::<serde_json::Value>(&server.url)
+            .get_json::<serde_json::Value>(&server.url, &[])
             .unwrap_err();
         assert_eq!(
             error.to_string(),
@@ -446,6 +462,65 @@ mod tests {
                 server.url
             )
         );
+    }
+
+    /// 「HTTP クライアント」 方法: the error for a non-200 status names Modrinth's `description`.
+    /// The body was returned by api.modrinth.com on 2026-10-21.
+    #[test]
+    fn unsuccessful_status_error_names_the_modrinth_description() {
+        let body = br#"{"error":"not_found","description":"the requested route does not exist"}"#;
+        let server = FakeServer::start(vec![immediately(response("404 Not Found", body))]);
+        let error = client(LONG_IDLE_TIMEOUT)
+            .get_json::<serde_json::Value>(&server.url, &[])
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "{} responded with HTTP status 404: the requested route does not exist",
+                server.url
+            )
+        );
+    }
+
+    /// d-http-3
+    #[test]
+    fn query_value_arrives_as_given() {
+        let value = "a&b=c#d e\"f";
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let server = runtime.block_on(async {
+            let server = wiremock::MockServer::start().await;
+            wiremock::Mock::given(wiremock::matchers::method("GET"))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("{}"))
+                .mount(&server)
+                .await;
+            server
+        });
+        let _: serde_json::Value = client(LONG_IDLE_TIMEOUT)
+            .get_json(&format!("{}/search", server.uri()), &[("query", value)])
+            .unwrap();
+        let requests = runtime.block_on(server.received_requests()).unwrap();
+        let received: Vec<(String, String)> = requests[0]
+            .url
+            .query_pairs()
+            .map(|(name, value)| (name.into_owned(), value.into_owned()))
+            .collect();
+        assert_eq!(received, [("query".to_owned(), value.to_owned())]);
+    }
+
+    /// 「HTTP クライアント」 方法: a download follows a redirect to another host.
+    #[test]
+    fn download_follows_a_redirect() {
+        let target = FakeServer::start(vec![immediately(response("200 OK", b"jar"))]);
+        let redirect = format!(
+            "HTTP/1.1 302 Found\r\nLocation: {}\r\nContent-Length: 0\r\n\r\n",
+            target.url
+        );
+        let origin = FakeServer::start(vec![immediately(redirect.into_bytes())]);
+        let mut sink = Vec::new();
+        client(LONG_IDLE_TIMEOUT)
+            .download(&origin.url, &mut sink)
+            .unwrap();
+        assert_eq!(sink, b"jar");
     }
 
     /// 「HTTP クライアント」 方法: a download fails when no data arrives for the idle timeout.

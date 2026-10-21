@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::atomic_fs;
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("failed to read {}", path.display())]
@@ -22,7 +24,7 @@ pub enum Error {
     Write {
         path: PathBuf,
         #[source]
-        source: io::Error,
+        source: atomic_fs::Error,
     },
 }
 
@@ -30,22 +32,37 @@ impl Error {
     pub fn hint(&self) -> Option<String> {
         None
     }
+
+    /// Whether reading failed because there is no file.
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, Error::Read { source, .. } if source.kind() == io::ErrorKind::NotFound)
+    }
 }
 
-/// The contents of a server directory's `mism.toml`: which server software it runs, and which
-/// version of it.
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// The contents of a server directory's `mism.toml`: which server software it runs, which
+/// version of it, and the plugins mism placed in its `plugins/`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MismToml {
     pub software: String,
     pub minecraft_version: String,
     pub software_version: u64,
+    /// In the order mism placed them (plg-4). A file without `plugins` has no records.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plugins: Vec<PluginRecord>,
+}
+
+/// The record of one plugin mism placed in `plugins/` (plg-4).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginRecord {
+    pub name: String,
+    pub source: String,
+    pub file_name: String,
+    pub sha256: String,
 }
 
 impl MismToml {
-    // The design's reading of mism.toml serves the subcommands for existing server directories
-    // (start, stop, update), none of which exists yet; `mism new` only writes it.
-    #[allow(dead_code)]
     pub fn read(path: &Path) -> Result<MismToml, Error> {
         let text = fs::read_to_string(path).map_err(|source| Error::Read {
             path: path.to_path_buf(),
@@ -57,10 +74,12 @@ impl MismToml {
         })
     }
 
+    /// Writes the file by atomic replacement, so that it has either the old or the new content
+    /// however mism ends (plg-8).
     pub fn write(&self, path: &Path) -> Result<(), Error> {
         let text = toml::to_string(self)
-            .expect("a table of two strings and an unsigned integer is representable in TOML");
-        fs::write(path, text).map_err(|source| Error::Write {
+            .expect("strings, an unsigned integer, and an array of tables of strings are TOML");
+        atomic_fs::replace(path, text.as_bytes()).map_err(|source| Error::Write {
             path: path.to_path_buf(),
             source,
         })
@@ -83,12 +102,31 @@ mod tests {
         tempfile::tempdir_in(parent).unwrap()
     }
 
+    use super::PluginRecord;
+
     fn paper_26_3_206() -> MismToml {
         MismToml {
             software: "paper".to_owned(),
             minecraft_version: "26.3".to_owned(),
             software_version: 206,
+            plugins: Vec::new(),
         }
+    }
+
+    fn luckperms_record() -> PluginRecord {
+        PluginRecord {
+            name: "LuckPerms".to_owned(),
+            source: "modrinth:luckperms:v5.5.71-bukkit".to_owned(),
+            file_name: "LuckPerms-Bukkit-5.5.71.jar".to_owned(),
+            sha256: "0".repeat(64),
+        }
+    }
+
+    fn read_text(content: &str) -> MismToml {
+        let directory = temporary_directory();
+        let path = directory.path().join("mism.toml");
+        fs::write(&path, content).unwrap();
+        MismToml::read(&path).unwrap()
     }
 
     /// Reads `content` as an `mism.toml` and returns the file's path and the reported error with
@@ -168,5 +206,84 @@ mod tests {
             report.contains(&path) && report.contains("software_version"),
             "{report}"
         );
+    }
+
+    /// d-toml-1
+    #[test]
+    fn file_without_plugins_has_no_records() {
+        let read = read_text(
+            "software = \"paper\"\nminecraft_version = \"26.3\"\nsoftware_version = 206\n",
+        );
+
+        assert_eq!(read.plugins, []);
+    }
+
+    /// d-toml-2
+    #[test]
+    fn file_without_records_has_only_the_three_keys() {
+        let directory = temporary_directory();
+        let path = directory.path().join("mism.toml");
+
+        paper_26_3_206().write(&path).unwrap();
+
+        let table: toml::Table = fs::read_to_string(&path).unwrap().parse().unwrap();
+        let keys: Vec<_> = table.keys().map(String::as_str).collect();
+        assert_eq!(keys, ["minecraft_version", "software", "software_version"]);
+    }
+
+    /// 「mism.toml」 方法 (plg-4): records are written as `[[plugins]]` and read back in order.
+    #[test]
+    fn records_are_read_back_in_order() {
+        let directory = temporary_directory();
+        let path = directory.path().join("mism.toml");
+        let second = PluginRecord {
+            name: "Vault".to_owned(),
+            ..luckperms_record()
+        };
+        let written = MismToml {
+            plugins: vec![luckperms_record(), second],
+            ..paper_26_3_206()
+        };
+        written.write(&path).unwrap();
+
+        assert_eq!(MismToml::read(&path).unwrap(), written);
+    }
+
+    /// 「mism.toml」 方法: the documented layout of a record.
+    #[test]
+    fn records_are_read_from_the_documented_layout() {
+        let read = read_text(&format!(
+            "software = \"paper\"\nminecraft_version = \"26.3\"\nsoftware_version = 206\n\n\
+             [[plugins]]\nname = \"LuckPerms\"\nsource = \"modrinth:luckperms:v5.5.71-bukkit\"\n\
+             file_name = \"LuckPerms-Bukkit-5.5.71.jar\"\nsha256 = \"{}\"\n",
+            "0".repeat(64)
+        ));
+
+        assert_eq!(read.plugins, [luckperms_record()]);
+    }
+
+    /// 「mism.toml」 方法: an unknown field in a record is an error naming the file and the field.
+    #[test]
+    fn unknown_field_in_a_record_names_the_file_and_the_field() {
+        let (path, report) = read_failure(
+            "software = \"paper\"\nminecraft_version = \"26.3\"\nsoftware_version = 206\n\n\
+             [[plugins]]\nname = \"A\"\nsource = \"a.jar\"\nfile_name = \"a.jar\"\nsha256 = \"0\"\n\
+             version = \"1\"\n",
+        );
+
+        assert!(
+            report.contains(&path) && report.contains("version"),
+            "{report}"
+        );
+    }
+
+    /// 「mism plugin の対象のサーバーと共通の手順」 方法 1: a missing file is told apart.
+    #[test]
+    fn reading_a_missing_file_is_a_not_found_error() {
+        let directory = temporary_directory();
+
+        let error = MismToml::read(&directory.path().join("mism.toml")).unwrap_err();
+
+        assert!(error.is_not_found());
     }
 }

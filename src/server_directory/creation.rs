@@ -4,15 +4,11 @@ use std::path::{self, Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use super::ServerDirectory;
 use super::initial_launch;
 use super::mism_toml::{self, MismToml};
+use super::{ServerDirectory, mism_toml_path};
 use crate::atomic_fs;
 use crate::interruption::{self, Signal};
-
-const WORKING_DIRECTORY_PREFIX: &str = ".mism-tmp-";
-const RANDOM_SOURCE: &str = "/dev/urandom";
-const MISM_TOML_FILE_NAME: &str = "mism.toml";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -40,8 +36,8 @@ pub enum Error {
         #[source]
         source: io::Error,
     },
-    #[error("failed to read random bytes from {RANDOM_SOURCE}")]
-    ReadRandom(#[source] io::Error),
+    #[error("failed to name the working directory")]
+    WorkingName(#[source] atomic_fs::Error),
     #[error("failed to create the working directory {}", path.display())]
     CreateWorkingDirectory {
         path: PathBuf,
@@ -199,24 +195,12 @@ fn check_parent_is_directory(parent: &Path) -> Result<(), Error> {
 
 /// Step 5.
 fn create_working_directory(parent: &Path) -> Result<PathBuf, Error> {
-    let path = parent.join(format!(
-        "{WORKING_DIRECTORY_PREFIX}{}",
-        random_hex_digits()?
-    ));
+    let path = parent.join(atomic_fs::working_name().map_err(Error::WorkingName)?);
     fs::create_dir(&path).map_err(|source| Error::CreateWorkingDirectory {
         path: path.clone(),
         source,
     })?;
     Ok(path)
-}
-
-/// 16 lowercase hexadecimal digits from 8 random bytes.
-fn random_hex_digits() -> Result<String, Error> {
-    let mut bytes = [0; 8];
-    File::open(RANDOM_SOURCE)
-        .and_then(|mut random| random.read_exact(&mut bytes))
-        .map_err(Error::ReadRandom)?;
-    Ok(to_hex(&bytes))
 }
 
 /// Steps 6 to 8.
@@ -274,7 +258,7 @@ fn sha256_of_file(path: &Path) -> io::Result<String> {
 
 /// Step 7 of 「初回起動」 (new-9).
 fn write_mism_toml(working_directory: &Path, mism_toml: &MismToml) -> Result<(), Error> {
-    Ok(mism_toml.write(&working_directory.join(MISM_TOML_FILE_NAME))?)
+    Ok(mism_toml.write(&mism_toml_path(working_directory))?)
 }
 
 /// Notices a signal that arrived after the server exited, at the last moment at which nothing is
@@ -355,6 +339,7 @@ mod tests {
             software: "paper".to_owned(),
             minecraft_version: "26.3".to_owned(),
             software_version: 206,
+            plugins: Vec::new(),
         }
     }
 

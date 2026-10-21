@@ -1,30 +1,25 @@
-use std::ffi::OsString;
-use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
-use sha2::{Digest, Sha256};
-
 use crate::atomic_fs::{self, UnnamedFile};
+use crate::cache_directory;
+use crate::content_hash::{self, HashingWriter};
 use crate::http_client::{self, HttpClient};
 use crate::interruption::Signal;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("neither XDG_CACHE_HOME nor HOME is set, so the cache directory cannot be determined")]
-    HomeNotSet,
+    #[error(transparent)]
+    CacheDirectory(#[from] cache_directory::Error),
     #[error("failed to create the directory {}", path.display())]
     CreateDirectory {
         path: PathBuf,
         #[source]
         source: io::Error,
     },
-    #[error("failed to read the cached jar {}", path.display())]
-    ReadCached {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
+    #[error("failed to hash the cached jar")]
+    HashCached(#[source] content_hash::Error),
     #[error("failed to remove the cached jar {} whose SHA-256 is wrong", path.display())]
     RemoveStale {
         path: PathBuf,
@@ -50,21 +45,20 @@ impl Error {
                 "run the command again; if this repeats, check the download URL in a browser"
                     .to_owned(),
             ),
+            Error::CacheDirectory(error) => error.hint(),
+            Error::HashCached(error) => error.hint(),
             Error::Download(error) => error.hint(),
             Error::AtomicFs(error) => error.hint(),
-            Error::HomeNotSet
-            | Error::CreateDirectory { .. }
-            | Error::ReadCached { .. }
-            | Error::RemoveStale { .. } => None,
+            Error::CreateDirectory { .. } | Error::RemoveStale { .. } => None,
         }
     }
 
     pub fn interrupted_by(&self) -> Option<Signal> {
         match self {
             Error::Download(error) => error.interrupted_by(),
-            Error::HomeNotSet
+            Error::CacheDirectory(_)
             | Error::CreateDirectory { .. }
-            | Error::ReadCached { .. }
+            | Error::HashCached(_)
             | Error::RemoveStale { .. }
             | Error::Sha256Mismatch { .. }
             | Error::AtomicFs(_) => None,
@@ -84,7 +78,7 @@ pub fn obtain(
     url: &str,
 ) -> Result<PathBuf, Error> {
     let jar_path = jar_path(
-        &cache_directory()?,
+        &cache_directory::path()?,
         project_name,
         minecraft_version,
         software_version,
@@ -92,22 +86,6 @@ pub fn obtain(
     );
     obtain_at(client, &jar_path, sha256, url)?;
     Ok(jar_path)
-}
-
-fn cache_directory() -> Result<PathBuf, Error> {
-    cache_directory_from(std::env::var_os("XDG_CACHE_HOME"), std::env::var_os("HOME"))
-}
-
-fn cache_directory_from(
-    xdg_cache_home: Option<OsString>,
-    home: Option<OsString>,
-) -> Result<PathBuf, Error> {
-    match xdg_cache_home.filter(|value| !value.is_empty()) {
-        Some(xdg_cache_home) => Ok(PathBuf::from(xdg_cache_home).join("mism")),
-        None => Ok(PathBuf::from(home.ok_or(Error::HomeNotSet)?)
-            .join(".cache")
-            .join("mism")),
-    }
 }
 
 fn jar_path(
@@ -160,24 +138,11 @@ fn obtain_at(
 
 /// The lowercase hex SHA-256 of the file, or `None` when there is no such file.
 fn sha256_of_existing_file(path: &Path) -> Result<Option<String>, Error> {
-    let read_failed = |source| Error::ReadCached {
-        path: path.to_path_buf(),
-        source,
-    };
-    let mut file = match File::open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(read_failed(error)),
-    };
-    let mut hasher = Sha256::new();
-    let mut chunk = [0; 64 * 1024];
-    loop {
-        match file.read(&mut chunk).map_err(read_failed)? {
-            0 => break,
-            length => hasher.update(&chunk[..length]),
-        }
+    match content_hash::sha256_of_file(path) {
+        Ok(sha256) => Ok(Some(sha256)),
+        Err(error) if error.is_not_found() => Ok(None),
+        Err(error) => Err(Error::HashCached(error)),
     }
-    Ok(Some(to_hex(&hasher.finalize())))
 }
 
 fn verify_existing_file(path: &Path, expected_sha256: &str, url: &str) -> Result<(), Error> {
@@ -200,19 +165,16 @@ fn download_verified(
     expected_sha256: &str,
     url: &str,
 ) -> Result<UnnamedFile, Error> {
-    let mut sink = HashingWriter {
-        file: UnnamedFile::create_in(directory)?,
-        hasher: Sha256::new(),
-    };
+    let mut sink = HashingWriter::new(UnnamedFile::create_in(directory)?);
     client.download(url, &mut sink)?;
-    let actual = to_hex(&sink.hasher.finalize());
-    if actual == expected_sha256 {
-        Ok(sink.file)
+    let hashed = sink.finish();
+    if hashed.sha256 == expected_sha256 {
+        Ok(hashed.inner)
     } else {
         Err(Error::Sha256Mismatch {
             url: url.to_owned(),
             expected: expected_sha256.to_owned(),
-            actual,
+            actual: hashed.sha256,
         })
     }
 }
@@ -228,32 +190,9 @@ fn remove_stale_file(path: &Path) -> Result<(), Error> {
     }
 }
 
-fn to_hex(digest: &[u8]) -> String {
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-/// Writes to `file` and hashes the same bytes.
-struct HashingWriter {
-    file: UnnamedFile,
-    hasher: Sha256,
-}
-
-impl Write for HashingWriter {
-    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
-        let written = self.file.write(buffer)?;
-        self.hasher.update(&buffer[..written]);
-        Ok(written)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.file.flush()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
-    use std::ffi::OsString;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::thread;
@@ -264,7 +203,7 @@ mod tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    use super::{Error, cache_directory_from, jar_path, obtain_at};
+    use super::{Error, jar_path, obtain_at};
     use crate::http_client::HttpClient;
 
     const JAR_BYTES: &[u8] = b"pretend this is a jar";
@@ -276,7 +215,10 @@ mod tests {
     }
 
     fn sha256_hex(bytes: &[u8]) -> String {
-        super::to_hex(&Sha256::digest(bytes))
+        Sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
     }
 
     /// A fake PaperMC download server that must stay alive with its runtime.
@@ -469,38 +411,5 @@ mod tests {
         obtain_jar(cache.path(), &download, &sha256_hex(JAR_BYTES)).unwrap();
 
         assert_eq!(fs::read(other).unwrap(), b"older jar");
-    }
-
-    /// cache-1: XDG_CACHE_HOME selects the cache directory.
-    #[test]
-    fn xdg_cache_home_selects_the_cache_directory() {
-        let directory = cache_directory_from(Some("/xdg".into()), Some("/home/user".into()));
-
-        assert_eq!(directory.unwrap(), Path::new("/xdg/mism"));
-    }
-
-    /// cache-2: without XDG_CACHE_HOME the cache directory is under HOME.
-    #[test]
-    fn home_cache_is_used_without_xdg_cache_home() {
-        let directory = cache_directory_from(None, Some("/home/user".into()));
-
-        assert_eq!(directory.unwrap(), Path::new("/home/user/.cache/mism"));
-    }
-
-    /// cache-2: an empty XDG_CACHE_HOME counts as unset.
-    #[test]
-    fn empty_xdg_cache_home_counts_as_unset() {
-        let directory = cache_directory_from(Some(OsString::new()), Some("/home/user".into()));
-
-        assert_eq!(directory.unwrap(), Path::new("/home/user/.cache/mism"));
-    }
-
-    /// cache-2: with neither variable set there is no fallback.
-    #[test]
-    fn missing_home_is_an_error() {
-        assert!(matches!(
-            cache_directory_from(None, None),
-            Err(Error::HomeNotSet)
-        ));
     }
 }

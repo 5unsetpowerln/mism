@@ -1,4 +1,5 @@
 pub mod new;
+pub mod plugin;
 pub mod versions;
 
 use crate::command_line::Software;

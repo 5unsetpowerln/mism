@@ -1,13 +1,22 @@
 mod atomic_fs;
+mod cache_directory;
 mod command_line;
+mod compatibility;
+mod content_hash;
+mod file_name;
 mod folia;
 mod http_client;
 mod interruption;
 mod jar_cache;
 mod minecraft_version;
+mod modrinth_api;
 mod output;
 mod papermc;
 mod papermc_api;
+mod plugin_cache;
+mod plugin_jar;
+mod plugin_source;
+mod prompt;
 mod server_directory;
 mod subcommands;
 
@@ -25,6 +34,8 @@ enum Error {
     New(#[from] subcommands::new::Error),
     #[error(transparent)]
     Versions(#[from] subcommands::versions::Error),
+    #[error(transparent)]
+    Plugin(#[from] subcommands::plugin::Error),
 }
 
 impl Error {
@@ -33,6 +44,7 @@ impl Error {
             Error::Interruption(error) => error.hint(),
             Error::New(error) => error.hint(),
             Error::Versions(error) => error.hint(),
+            Error::Plugin(error) => error.hint(),
         }
     }
 
@@ -41,6 +53,7 @@ impl Error {
             Error::Interruption(_) => None,
             Error::New(error) => error.interrupted_by(),
             Error::Versions(error) => error.interrupted_by(),
+            Error::Plugin(error) => error.interrupted_by(),
         }
     }
 }
@@ -57,6 +70,7 @@ fn run(command_line: CommandLine) -> Result<(), Error> {
     match command_line.subcommand {
         Subcommand::New(arguments) => subcommands::new::run(&arguments)?,
         Subcommand::Versions(arguments) => subcommands::versions::run(&arguments)?,
+        Subcommand::Plugin(arguments) => subcommands::plugin::run(&arguments)?,
     }
     Ok(())
 }

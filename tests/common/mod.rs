@@ -2,10 +2,15 @@
 #![allow(dead_code)]
 
 pub mod fake_java;
+pub mod fake_modrinth;
 pub mod fake_papermc;
 pub mod mism_process;
 pub mod new_server_environment;
+pub mod plugin_output;
+pub mod plugin_server_directory;
 pub mod pseudo_terminal;
 pub mod server_output;
 pub mod slow_jar_server;
+pub mod stdin_connection;
 pub mod temporary_directory;
+pub mod test_plugin_jar;

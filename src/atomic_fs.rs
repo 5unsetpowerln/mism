@@ -1,11 +1,14 @@
-use std::fs::File;
-use std::io::{self, Write};
+use std::fs::{self, File};
+use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 
 use nix::errno::Errno;
 use nix::fcntl::{AT_FDCWD, AtFlags, OFlag, RenameFlags};
 use nix::sys::stat::Mode;
+
+const WORKING_NAME_PREFIX: &str = ".mism-tmp-";
+const RANDOM_SOURCE: &str = "/dev/urandom";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -35,6 +38,28 @@ pub enum Error {
         to: PathBuf,
         #[source]
         source: Errno,
+    },
+    #[error("failed to read random bytes from {RANDOM_SOURCE}")]
+    ReadRandom(#[source] io::Error),
+    #[error("failed to write the new content of {}", path.display())]
+    WriteContent {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("failed to replace {} with {}", to.display(), from.display())]
+    Replace {
+        from: PathBuf,
+        to: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("failed to remove {} ({removal}) after this failure", path.display())]
+    LeftWorkingFile {
+        path: PathBuf,
+        removal: io::Error,
+        #[source]
+        failure: Box<Error>,
     },
 }
 
@@ -102,6 +127,70 @@ impl Write for UnnamedFile {
     }
 }
 
+/// `.mism-tmp-` and 16 lowercase hexadecimal digits made from 8 random bytes, a name that tells
+/// the user that mism left the entry behind and that does not end with `.jar`.
+pub fn working_name() -> Result<String, Error> {
+    let mut bytes = [0; 8];
+    File::open(RANDOM_SOURCE)
+        .and_then(|mut random| random.read_exact(&mut bytes))
+        .map_err(Error::ReadRandom)?;
+    let digits: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    Ok(format!("{WORKING_NAME_PREFIX}{digits}"))
+}
+
+/// Writes `content` to `path` so that other processes see either the old or the new content
+/// there, whether or not a file was there before.
+pub fn replace(path: &Path, content: &[u8]) -> Result<(), Error> {
+    let directory = directory_of(path);
+    let file = write_unnamed(directory, path, content)?;
+    let working_path = link_under_working_name(file, directory)?;
+    rename_over(&working_path, path)
+}
+
+fn directory_of(path: &Path) -> &Path {
+    match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    }
+}
+
+/// Step 1 of the replacement.
+fn write_unnamed(directory: &Path, path: &Path, content: &[u8]) -> Result<UnnamedFile, Error> {
+    let mut file = UnnamedFile::create_in(directory)?;
+    file.write_all(content)
+        .map_err(|source| Error::WriteContent {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    Ok(file)
+}
+
+/// Step 2 of the replacement. A failed link leaves no name behind.
+fn link_under_working_name(file: UnnamedFile, directory: &Path) -> Result<PathBuf, Error> {
+    let working_path = directory.join(working_name()?);
+    file.link_as(&working_path)?;
+    Ok(working_path)
+}
+
+/// Steps 3 and 4 of the replacement: `rename` replaces whatever is at `path` at once.
+fn rename_over(working_path: &Path, path: &Path) -> Result<(), Error> {
+    fs::rename(working_path, path).map_err(|source| {
+        let failure = Error::Replace {
+            from: working_path.to_path_buf(),
+            to: path.to_path_buf(),
+            source,
+        };
+        match fs::remove_file(working_path) {
+            Ok(()) => failure,
+            Err(removal) => Error::LeftWorkingFile {
+                path: working_path.to_path_buf(),
+                removal,
+                failure: Box::new(failure),
+            },
+        }
+    })
+}
+
 /// Fails with `Error::AlreadyExists` when something already exists at `to`.
 pub fn rename_without_replace(from: &Path, to: &Path) -> Result<(), Error> {
     nix::fcntl::renameat2(AT_FDCWD, from, AT_FDCWD, to, RenameFlags::RENAME_NOREPLACE).map_err(
@@ -127,7 +216,10 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use super::{Error, UnnamedFile, rename_without_replace};
+    use super::{
+        Error, UnnamedFile, link_under_working_name, rename_without_replace, replace, working_name,
+        write_unnamed,
+    };
 
     fn temporary_directory() -> TempDir {
         let parent = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp");
@@ -281,5 +373,88 @@ mod tests {
         rename_without_replace(&from, &to).unwrap_err();
 
         assert_eq!(snapshot(parent.path()), before);
+    }
+
+    /// 「書き込みが終わるまで名前を持たないファイルの操作」 方法: a working name is `.mism-tmp-`
+    /// and 16 lowercase hexadecimal digits.
+    #[test]
+    fn working_name_is_the_prefix_and_16_hexadecimal_digits() {
+        let name = working_name().unwrap();
+
+        let digits = name.strip_prefix(".mism-tmp-").unwrap_or_default();
+        assert!(
+            digits.len() == 16
+                && digits
+                    .bytes()
+                    .all(|byte| b"0123456789abcdef".contains(&byte)),
+            "{name}"
+        );
+    }
+
+    /// d-fs-3: until step 3, the file being replaced keeps its old content.
+    #[test]
+    fn replaced_file_keeps_its_old_content_until_the_rename() {
+        let directory = temporary_directory();
+        let path = directory.path().join("mism.toml");
+        fs::write(&path, b"old").unwrap();
+
+        let file = write_unnamed(directory.path(), &path, b"new").unwrap();
+        let _working_path = link_under_working_name(file, directory.path()).unwrap();
+
+        assert_eq!(fs::read(&path).unwrap(), b"old");
+    }
+
+    /// d-fs-3: after the replacement the file has the new content.
+    #[test]
+    fn replaced_file_has_the_new_content() {
+        let directory = temporary_directory();
+        let path = directory.path().join("mism.toml");
+        fs::write(&path, b"old").unwrap();
+
+        replace(&path, b"new").unwrap();
+
+        assert_eq!(fs::read(&path).unwrap(), b"new");
+    }
+
+    /// 「書き込みが終わるまで名前を持たないファイルの操作」 方法: replacing a path with no file
+    /// writes the file.
+    #[test]
+    fn replacing_a_missing_file_writes_it() {
+        let directory = temporary_directory();
+        let path = directory.path().join("mism.toml");
+
+        replace(&path, b"new").unwrap();
+
+        assert_eq!(fs::read(&path).unwrap(), b"new");
+    }
+
+    /// d-fs-4
+    #[test]
+    fn successful_replacement_leaves_no_working_file() {
+        let directory = temporary_directory();
+        let path = directory.path().join("mism.toml");
+        fs::write(&path, b"old").unwrap();
+
+        replace(&path, b"new").unwrap();
+
+        assert_eq!(
+            snapshot(directory.path()),
+            BTreeMap::from([(PathBuf::from("mism.toml"), Some(b"new".to_vec()))])
+        );
+    }
+
+    /// 「書き込みが終わるまで名前を持たないファイルの操作」 方法 4: a failed rename removes the
+    /// working file.
+    #[test]
+    fn failed_replacement_removes_the_working_file() {
+        let directory = temporary_directory();
+        // `rename` cannot put a file over a non-empty directory.
+        let path = directory.path().join("mism.toml");
+        create_directory_with_file(&path);
+        let before = snapshot(directory.path());
+
+        replace(&path, b"new").unwrap_err();
+
+        assert_eq!(snapshot(directory.path()), before);
     }
 }
